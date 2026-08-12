@@ -1,0 +1,82 @@
+{% extends 'base.html' %}
+
+{% block title %}{{ action }} Food Item | Admin Panel{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto px-4 py-12">
+
+  <div class="bg-white rounded-3xl p-8 border border-slate-200 shadow-xl">
+    
+    <div class="flex items-center justify-between mb-8 pb-4 border-b border-slate-100">
+      <div>
+        <h1 class="text-2xl font-extrabold text-slate-900">{{ action }} Food Item</h1>
+        <p class="text-slate-500 text-xs mt-0.5">Manage cafeteria menu offerings and prices.</p>
+      </div>
+      <a href="{{ url_for('admin_dashboard') }}" class="text-xs font-bold text-slate-500 hover:text-slate-800">
+        ← Back to Dashboard
+      </a>
+    </div>
+
+    <form method="POST" action="{{ url_for('admin_edit_food', food_id=food.id) if food else url_for('admin_add_food') }}" class="space-y-5">
+      
+      <div>
+        <label for="name" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">Food Name <span class="text-brand-500">*</span></label>
+        <input type="text" id="name" name="name" required value="{{ food.name if food else '' }}" placeholder="e.g., Crispy Chicken Burger"
+               class="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+      </div>
+
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <label for="price" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">Price (₹) <span class="text-brand-500">*</span></label>
+          <input type="number" step="0.01" min="1.00" id="price" name="price" required value="{{ food.price if food else '99.00' }}"
+                 class="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+        </div>
+
+        <div>
+          <label for="category" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">Category <span class="text-brand-500">*</span></label>
+          <select id="category" name="category" required class="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            {% for cat in ['Breakfast', 'Meals', 'Snacks', 'Beverages', 'Desserts'] %}
+              <option value="{{ cat }}" {% if food and food.category == cat %}selected{% endif %}>{{ cat }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label for="description" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">Item Description</label>
+        <textarea id="description" name="description" rows="3" placeholder="Brief appetizing description of ingredients..."
+                  class="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">{{ food.description if food else '' }}</textarea>
+      </div>
+
+      <div>
+        <label for="image_url" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1.5">Image URL</label>
+        <input type="url" id="image_url" name="image_url" value="{{ food.image_url if food else '' }}" placeholder="https://images.unsplash.com/..."
+               class="w-full px-4 py-3 rounded-2xl border border-slate-200 bg-slate-50 text-sm font-medium text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+        <p class="text-[11px] text-slate-400 mt-1">Leave blank to use default high quality food placeholder.</p>
+      </div>
+
+      <div class="pt-2">
+        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-2xl bg-slate-50 border border-slate-200">
+          <input type="checkbox" name="availability" value="1" {% if not food or food.availability %}checked{% endif %} class="w-5 h-5 rounded text-brand-500 focus:ring-brand-500">
+          <div>
+            <span class="block text-xs font-extrabold text-slate-800">Available for Order</span>
+            <span class="block text-[11px] text-slate-500">If unchecked, customers will see "Sold Out / Unavailable".</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="pt-4 flex items-center justify-end gap-3">
+        <a href="{{ url_for('admin_dashboard') }}" class="px-5 py-3 rounded-2xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-100 transition">
+          Cancel
+        </a>
+        <button type="submit" class="px-6 py-3 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-xs shadow-md shadow-brand-500/20 transition">
+          Save {{ action }} Food Item
+        </button>
+      </div>
+
+    </form>
+
+  </div>
+
+</div>
+{% endblock %}

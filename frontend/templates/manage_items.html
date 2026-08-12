@@ -1,0 +1,271 @@
+{% extends 'base.html' %}
+
+{% block title %}Manage Menu & Soft Delete Archive | Admin Panel{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+
+  <!-- Header & Add Button -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+    <div>
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 text-brand-400 text-xs font-bold mb-2">
+        ⚡ Canteen Admin Control
+      </div>
+      <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Menu Management & Audit History</h1>
+      <p class="text-slate-500 text-xs mt-0.5">Manage active canteen offerings and audit soft-deleted menu history.</p>
+    </div>
+    
+    <button onclick="openAddModal()" class="px-5 py-3 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-xs shadow-md shadow-brand-500/20 transition flex items-center justify-center gap-2">
+      <span>+ Add New Food Item</span>
+    </button>
+  </div>
+
+  <!-- Tab Switcher Navigation -->
+  <div class="flex items-center gap-3 border-b border-slate-200 mb-8">
+    <button id="tab-btn-active" onclick="switchTab('active')" class="pb-3 px-2 text-sm font-extrabold border-b-2 border-brand-500 text-brand-600 transition flex items-center gap-2">
+      <span>🟢 Active Canteen Menu</span>
+      <span class="px-2 py-0.5 rounded-full text-xs bg-orange-100 text-brand-700">{{ active_count }}</span>
+    </button>
+
+    <button id="tab-btn-deleted" onclick="switchTab('deleted')" class="pb-3 px-2 text-sm font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-900 transition flex items-center gap-2">
+      <span>📁 Deleted/Archived History</span>
+      <span class="px-2 py-0.5 rounded-full text-xs bg-slate-200 text-slate-700">{{ deleted_count }}</span>
+    </button>
+  </div>
+
+  <!-- TAB 1: ACTIVE MENU SECTION -->
+  <div id="section-active-menu" class="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
+    <div class="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+      <div>
+        <h2 class="text-lg font-extrabold text-slate-900">Currently Active Items</h2>
+        <p class="text-slate-500 text-xs">These items are live and visible to students on the canteen menu.</p>
+      </div>
+    </div>
+
+    {% if active_items %}
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs text-slate-700">
+          <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider font-extrabold border-b border-slate-200">
+            <tr>
+              <th class="p-3">Food Item</th>
+              <th class="p-3">Category</th>
+              <th class="p-3">Price (₹)</th>
+              <th class="p-3">Status</th>
+              <th class="p-3 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for item in active_items %}
+              <tr class="hover:bg-slate-50/80 transition">
+                <td class="p-3">
+                  <div class="flex items-center gap-3">
+                    <img src="{{ item.image_url }}" alt="{{ item.item_name }}" class="w-10 h-10 object-cover rounded-xl shadow-xs">
+                    <div>
+                      <span class="font-bold text-slate-900 block text-sm">{{ item.item_name }}</span>
+                      <span class="text-[11px] text-slate-400 line-clamp-1 max-w-xs">{{ item.description }}</span>
+                    </div>
+                  </div>
+                </td>
+                <td class="p-3 font-semibold text-slate-600">{{ item.category }}</td>
+                <td class="p-3 font-extrabold text-slate-900">₹{{ "%.2f"|format(item.price) }}</td>
+                <td class="p-3">
+                  <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-emerald-100 text-emerald-800 border border-emerald-200">Active</span>
+                </td>
+                <td class="p-3 text-right">
+                  <div class="flex items-center justify-end gap-2">
+                    <button onclick="openEditModal({{ item.id }}, {{ item.item_name|tojson }}, {{ item.price }}, {{ item.category|tojson }}, {{ item.description|tojson }}, {{ item.image_url|tojson }})" class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold transition">
+                      Edit
+                    </button>
+                    <form method="POST" action="{{ url_for('toggle_item_status', item_id=item.id) }}" class="inline">
+                      <button type="submit" class="px-3 py-1.5 rounded-lg bg-red-50 text-red-600 hover:bg-red-100 font-bold transition" title="Soft Delete Item">
+                        Soft Delete (Archive)
+                      </button>
+                    </form>
+                  </div>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-center py-12 text-slate-400 text-sm">
+        No active food items found in the menu. Click "+ Add New Food Item" above to add one.
+      </div>
+    {% endif %}
+  </div>
+
+  <!-- TAB 2: DELETED / ARCHIVED HISTORY SECTION -->
+  <div id="section-deleted-menu" class="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs hidden">
+    <div class="flex items-center justify-between mb-6 pb-4 border-b border-slate-100">
+      <div>
+        <h2 class="text-lg font-extrabold text-slate-900">Soft-Deleted / Archived Audit View</h2>
+        <p class="text-slate-500 text-xs">Items listed here are soft-deleted from MySQL and hidden from students, but preserved for audit history.</p>
+      </div>
+    </div>
+
+    {% if deleted_items %}
+      <div class="overflow-x-auto">
+        <table class="w-full text-left text-xs text-slate-700">
+          <thead class="bg-slate-50 text-slate-500 uppercase tracking-wider font-extrabold border-b border-slate-200">
+            <tr>
+              <th class="p-3">Archived Item</th>
+              <th class="p-3">Category</th>
+              <th class="p-3">Historical Price</th>
+              <th class="p-3">Status</th>
+              <th class="p-3 text-right">Audit Action</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-slate-100">
+            {% for item in deleted_items %}
+              <tr class="bg-slate-50/50 hover:bg-slate-100/60 transition">
+                <td class="p-3">
+                  <div class="flex items-center gap-3">
+                    <img src="{{ item.image_url }}" alt="{{ item.item_name }}" class="w-10 h-10 object-cover rounded-xl grayscale opacity-75">
+                    <div>
+                      <span class="font-bold text-slate-700 line-through block text-sm">{{ item.item_name }}</span>
+                      <span class="text-[11px] text-slate-400 line-clamp-1 max-w-xs">{{ item.description }}</span>
+                    </div>
+                  </div>
+                </td>
+                <td class="p-3 font-semibold text-slate-500">{{ item.category }}</td>
+                <td class="p-3 font-extrabold text-slate-700">₹{{ "%.2f"|format(item.price) }}</td>
+                <td class="p-3">
+                  <span class="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-red-100 text-red-700 border border-red-200">Deleted</span>
+                </td>
+                <td class="p-3 text-right">
+                  <form method="POST" action="{{ url_for('toggle_item_status', item_id=item.id) }}" class="inline">
+                    <button type="submit" class="px-3.5 py-1.5 rounded-lg bg-emerald-600 text-white hover:bg-emerald-700 font-bold transition shadow-xs">
+                      ↺ Restore to Active Menu
+                    </button>
+                  </form>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    {% else %}
+      <div class="text-center py-12 text-slate-400 text-sm">
+        No soft-deleted items in the archive.
+      </div>
+    {% endif %}
+  </div>
+
+</div>
+
+<!-- TAILWIND MODAL FOR ADDING / EDITING ITEM -->
+<div id="modal-item-form" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs hidden flex items-center justify-center p-4">
+  <div class="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl border border-slate-200 transform transition-all">
+    
+    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+      <h3 id="modal-title" class="text-lg font-extrabold text-slate-900">Add New Food Item</h3>
+      <button onclick="closeItemModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl">&times;</button>
+    </div>
+
+    <form id="item-modal-form" method="POST" action="{{ url_for('admin_add_food') }}" class="space-y-4">
+      <input type="hidden" id="form-item-id" name="item_id" value="">
+      
+      <div>
+        <label for="form-item-name" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Item Name <span class="text-brand-500">*</span></label>
+        <input type="text" id="form-item-name" name="item_name" required placeholder="e.g. Crispy Paneer Burger"
+               class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="form-item-price" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Price (₹) <span class="text-brand-500">*</span></label>
+          <input type="number" step="0.01" min="1.00" id="form-item-price" name="price" required placeholder="120.00"
+                 class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+        </div>
+
+        <div>
+          <label for="form-item-category" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Category <span class="text-brand-500">*</span></label>
+          <select id="form-item-category" name="category" required class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            {% for cat in ['Breakfast', 'Meals', 'Snacks', 'Beverages', 'Desserts'] %}
+              <option value="{{ cat }}">{{ cat }}</option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+
+      <div>
+        <label for="form-item-desc" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Description</label>
+        <textarea id="form-item-desc" name="description" rows="2" placeholder="Appetizing food item details..."
+                  class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none"></textarea>
+      </div>
+
+      <div>
+        <label for="form-item-image" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Image URL</label>
+        <input type="url" id="form-item-image" name="image_url" placeholder="https://images.unsplash.com/..."
+               class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+      </div>
+
+      <div class="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
+        <button type="button" onclick="closeItemModal()" class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-100">
+          Cancel
+        </button>
+        <button type="submit" class="px-5 py-2 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-xs shadow-md shadow-brand-500/20">
+          Save Item
+        </button>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function switchTab(tab) {
+  const activeSec = document.getElementById('section-active-menu');
+  const deletedSec = document.getElementById('section-deleted-menu');
+  const activeBtn = document.getElementById('tab-btn-active');
+  const deletedBtn = document.getElementById('tab-btn-deleted');
+
+  if (tab === 'active') {
+    activeSec.classList.remove('hidden');
+    deletedSec.classList.add('hidden');
+    activeBtn.className = 'pb-3 px-2 text-sm font-extrabold border-b-2 border-brand-500 text-brand-600 transition flex items-center gap-2';
+    deletedBtn.className = 'pb-3 px-2 text-sm font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-900 transition flex items-center gap-2';
+  } else {
+    activeSec.classList.add('hidden');
+    deletedSec.classList.remove('hidden');
+    deletedBtn.className = 'pb-3 px-2 text-sm font-extrabold border-b-2 border-brand-500 text-brand-600 transition flex items-center gap-2';
+    activeBtn.className = 'pb-3 px-2 text-sm font-bold border-b-2 border-transparent text-slate-500 hover:text-slate-900 transition flex items-center gap-2';
+  }
+}
+
+function openAddModal() {
+  document.getElementById('modal-title').textContent = 'Add New Food Item';
+  const form = document.getElementById('item-modal-form');
+  form.action = "{{ url_for('admin_add_food') }}";
+  document.getElementById('form-item-id').value = '';
+  document.getElementById('form-item-name').value = '';
+  document.getElementById('form-item-price').value = '100.00';
+  document.getElementById('form-item-category').value = 'Meals';
+  document.getElementById('form-item-desc').value = '';
+  document.getElementById('form-item-image').value = '';
+  
+  document.getElementById('modal-item-form').classList.remove('hidden');
+}
+
+function openEditModal(id, name, price, category, desc, image) {
+  document.getElementById('modal-title').textContent = 'Edit Food Item';
+  const form = document.getElementById('item-modal-form');
+  form.action = `/admin/menu/edit/${id}`;
+  document.getElementById('form-item-id').value = id;
+  document.getElementById('form-item-name').value = name;
+  document.getElementById('form-item-price').value = price;
+  document.getElementById('form-item-category').value = category;
+  document.getElementById('form-item-desc').value = desc || '';
+  document.getElementById('form-item-image').value = image || '';
+  
+  document.getElementById('modal-item-form').classList.remove('hidden');
+}
+
+function closeItemModal() {
+  document.getElementById('modal-item-form').classList.add('hidden');
+}
+</script>
+{% endblock %}

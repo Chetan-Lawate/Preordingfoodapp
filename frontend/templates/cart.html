@@ -1,0 +1,95 @@
+{% extends 'base.html' %}
+
+{% block title %}Shopping Cart & Pre-Order Checkout | CampusBites{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Your Pre-Order Cart</h1>
+      <p class="text-slate-500 text-sm mt-1">Review your items and select a break pickup slot.</p>
+    </div>
+    <button onclick="clearCart()" class="text-xs font-bold text-red-500 hover:text-red-700 hover:underline">
+      Clear Cart
+    </button>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-3 gap-8 items-start">
+    
+    <!-- Cart Items List Container -->
+    <div class="lg:col-span-2">
+      <div id="cart-items-container">
+        <!-- Rendered by JS main.js -->
+      </div>
+
+      <!-- Empty Cart State -->
+      <div id="cart-empty-state" class="hidden text-center py-16 bg-white rounded-3xl border border-slate-200">
+        <div class="w-16 h-16 bg-orange-50 text-brand-500 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4">
+          🛒
+        </div>
+        <h3 class="text-lg font-bold text-slate-800">Your cart is empty</h3>
+        <p class="text-slate-500 text-sm mt-1 max-w-sm mx-auto">Explore our daily fresh menu and add your favorite meals before break time.</p>
+        <a href="{{ url_for('menu') }}" class="inline-block mt-6 px-6 py-3 rounded-2xl bg-brand-500 text-white font-extrabold text-sm shadow-md shadow-brand-500/20 hover:bg-brand-600 transition">
+          Browse Menu Now ➔
+        </a>
+      </div>
+    </div>
+
+    <!-- Order Summary & Break Slot Checkout Box -->
+    <div id="cart-summary-box" class="bg-white rounded-3xl p-6 border border-slate-200 shadow-sm sticky top-24">
+      <h3 class="text-lg font-extrabold text-slate-900 mb-4 pb-3 border-b border-slate-100">
+        Checkout & Pickup Time
+      </h3>
+
+      <form id="checkout-form">
+        <!-- Break Time Selection -->
+        <div class="mb-6">
+          <label for="break_time_select" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-2">
+            Select Pickup Break Slot <span class="text-brand-500">*</span>
+          </label>
+          <select id="break_time_select" required class="w-full p-3 rounded-xl border border-slate-300 bg-slate-50 font-bold text-sm text-slate-800 focus:ring-2 focus:ring-brand-500 focus:outline-none">
+            <option value="" disabled selected>-- Choose Break Slot --</option>
+            {% for slot in break_times %}
+              <option value="{{ slot }}">{{ slot }}</option>
+            {% endfor %}
+          </select>
+          <p class="text-[11px] text-slate-500 mt-1.5 leading-tight">
+            ⚡ Kitchen staff will have your food hot and ready at your selected slot.
+          </p>
+        </div>
+
+        <!-- Summary Totals -->
+        <div class="space-y-2 mb-6 text-sm text-slate-600 border-t border-slate-100 pt-4">
+          <div class="flex justify-between">
+            <span>Subtotal</span>
+            <span id="cart-subtotal" class="font-semibold text-slate-900">₹0.00</span>
+          </div>
+          <div class="flex justify-between text-xs text-slate-400">
+            <span>Express Pre-Order Fee</span>
+            <span class="font-semibold text-emerald-600">FREE</span>
+          </div>
+          <div class="flex justify-between text-base font-extrabold text-slate-900 border-t border-slate-100 pt-3">
+            <span>Total Amount</span>
+            <span id="cart-total" class="text-brand-600 text-lg">₹0.00</span>
+          </div>
+        </div>
+
+        <!-- Checkout Action Button -->
+        {% if current_user.is_authenticated %}
+          <button id="btn-checkout-submit" type="submit" class="w-full py-4 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-sm shadow-lg shadow-brand-500/25 transition-all">
+            Confirm & Pre-Order Now
+          </button>
+        {% else %}
+          <a href="{{ url_for('login', next='/cart') }}" class="block text-center w-full py-4 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-sm shadow-md transition">
+            Sign In to Pre-Order
+          </a>
+          <p class="text-[11px] text-center text-slate-400 mt-2">You need to sign in to place pre-orders.</p>
+        {% endif %}
+      </form>
+    </div>
+
+  </div>
+
+</div>
+{% endblock %}

@@ -1,0 +1,187 @@
+{% extends 'base.html' %}
+
+{% block title %}Manage Time Slots | CampusBites Admin{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+
+  <!-- Header & Add Button -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+    <div>
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-900 text-orange-400 text-xs font-bold mb-2">
+        ⏰ Canteen Time Management
+      </div>
+      <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Break Time Slots Management</h1>
+      <p class="text-slate-500 text-xs mt-0.5">Configure active break windows for student food pickup and pre-ordering.</p>
+    </div>
+    
+    <button onclick="openAddSlotModal()" class="px-5 py-3 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-xs shadow-md shadow-brand-500/20 transition flex items-center justify-center gap-2">
+      <span>+ Add New Time Slot</span>
+    </button>
+  </div>
+
+  <!-- Time Slots Grid -->
+  {% if slots %}
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 mb-8">
+      {% for slot in slots %}
+        <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs flex flex-col justify-between relative overflow-hidden">
+          
+          <div>
+            <div class="flex items-center justify-between gap-2 mb-4 pb-3 border-b border-slate-100">
+              <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-2xl bg-orange-100 text-brand-600 font-extrabold flex items-center justify-center text-lg">
+                  ⏰
+                </div>
+                <div>
+                  <h3 class="font-extrabold text-slate-900 text-base leading-snug">{{ slot.slot_name }}</h3>
+                  <span class="text-[11px] text-slate-400 font-semibold block">ID #{{ slot.id }}</span>
+                </div>
+              </div>
+
+              <!-- Active Status Badge -->
+              {% if slot.is_active %}
+                <span id="slot-status-{{ slot.id }}" class="px-3 py-1 rounded-full text-xs font-extrabold bg-emerald-100 text-emerald-800 border border-emerald-300">
+                  Active
+                </span>
+              {% else %}
+                <span id="slot-status-{{ slot.id }}" class="px-3 py-1 rounded-full text-xs font-extrabold bg-gray-100 text-gray-600 border border-gray-200">
+                  Inactive
+                </span>
+              {% endif %}
+            </div>
+
+            <div class="bg-slate-50 p-4 rounded-2xl border border-slate-100 mb-6 space-y-2 text-xs">
+              <div class="flex items-center justify-between text-slate-600">
+                <span class="font-medium">Start Time:</span>
+                <span class="font-bold text-slate-900">{{ slot.start_time }}</span>
+              </div>
+              <div class="flex items-center justify-between text-slate-600">
+                <span class="font-medium">End Time:</span>
+                <span class="font-bold text-slate-900">{{ slot.end_time }}</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Card Footer Actions -->
+          <div class="flex items-center justify-between gap-2 pt-4 border-t border-slate-100">
+            <button onclick="openEditSlotModal({{ slot.id }}, {{ slot.slot_name|tojson }}, {{ slot.start_time|tojson }}, {{ slot.end_time|tojson }}, {{ 'true' if slot.is_active else 'false' }})" class="px-3.5 py-2 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold text-xs transition">
+              ✏️ Edit Times
+            </button>
+
+            <form method="POST" action="{{ url_for('toggle_slot_status', slot_id=slot.id) }}" class="inline">
+              {% if slot.is_active %}
+                <button type="submit" class="px-3.5 py-2 rounded-xl bg-amber-100 hover:bg-amber-200 text-amber-800 font-bold text-xs transition" title="Disable Pre-Orders for this slot">
+                  Pause Slot
+                </button>
+              {% else %}
+                <button type="submit" class="px-3.5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs transition shadow-xs">
+                  Enable Slot
+                </button>
+              {% endif %}
+            </form>
+          </div>
+
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="text-center py-16 bg-white rounded-3xl border border-slate-200">
+      <div class="w-16 h-16 bg-orange-50 text-brand-500 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4">
+        ⏰
+      </div>
+      <h3 class="text-lg font-bold text-slate-800">No Break Time Slots Configured</h3>
+      <p class="text-slate-500 text-sm mt-1 max-w-sm mx-auto">Click "+ Add New Time Slot" to create your first canteen break window.</p>
+    </div>
+  {% endif %}
+
+</div>
+
+<!-- TAILWIND MODAL FOR ADDING / EDITING TIME SLOT -->
+<div id="modal-slot-form" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs hidden flex items-center justify-center p-4">
+  <div class="bg-white rounded-3xl max-w-md w-full p-6 shadow-2xl border border-slate-200 transform transition-all">
+    
+    <div class="flex items-center justify-between mb-4 pb-3 border-b border-slate-100">
+      <h3 id="modal-slot-title" class="text-lg font-extrabold text-slate-900">Add New Time Slot</h3>
+      <button onclick="closeSlotModal()" class="text-slate-400 hover:text-slate-700 font-bold text-xl">&times;</button>
+    </div>
+
+    <form id="slot-form" method="POST" action="{{ url_for('manage_slots') }}" class="space-y-4">
+      <input type="hidden" id="form-slot-id" name="slot_id" value="">
+      
+      <div>
+        <label for="form-slot-name" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Slot Name <span class="text-brand-500">*</span></label>
+        <input type="text" id="form-slot-name" name="slot_name" required placeholder="e.g., Morning Break"
+               class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+      </div>
+
+      <div class="grid grid-cols-2 gap-3">
+        <div>
+          <label for="form-start-time" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">Start Time <span class="text-brand-500">*</span></label>
+          <input type="text" id="form-start-time" name="start_time" required placeholder="10:00 AM"
+                 class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+        </div>
+
+        <div>
+          <label for="form-end-time" class="block text-xs font-extrabold text-slate-700 uppercase tracking-wider mb-1">End Time <span class="text-brand-500">*</span></label>
+          <input type="text" id="form-end-time" name="end_time" required placeholder="10:45 AM"
+                 class="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-sm font-semibold text-slate-900 focus:ring-2 focus:ring-brand-500 focus:bg-white focus:outline-none">
+        </div>
+      </div>
+
+      <div class="pt-2">
+        <label class="flex items-center gap-3 cursor-pointer p-3 rounded-2xl bg-slate-50 border border-slate-200">
+          <input type="checkbox" id="form-slot-active" name="is_active" value="1" checked class="w-5 h-5 rounded text-brand-500 focus:ring-brand-500">
+          <div>
+            <span class="block text-xs font-extrabold text-slate-800">Active for Pre-Ordering</span>
+            <span class="block text-[11px] text-slate-500">Allows students to select this slot during checkout.</span>
+          </div>
+        </label>
+      </div>
+
+      <div class="pt-3 flex items-center justify-end gap-2 border-t border-slate-100">
+        <button type="button" onclick="closeSlotModal()" class="px-4 py-2 rounded-xl border border-slate-200 text-slate-600 font-bold text-xs hover:bg-slate-100">
+          Cancel
+        </button>
+        <button type="submit" class="px-5 py-2 rounded-xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-xs shadow-md shadow-brand-500/20">
+          Save Time Slot
+        </button>
+      </div>
+
+    </form>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+function openAddSlotModal() {
+  document.getElementById('modal-slot-title').textContent = 'Add New Time Slot';
+  const form = document.getElementById('slot-form');
+  form.action = "{{ url_for('manage_slots') }}";
+  document.getElementById('form-slot-id').value = '';
+  document.getElementById('form-slot-name').value = '';
+  document.getElementById('form-start-time').value = '10:00 AM';
+  document.getElementById('form-end-time').value = '10:45 AM';
+  document.getElementById('form-slot-active').checked = true;
+  
+  document.getElementById('modal-slot-form').classList.remove('hidden');
+}
+
+function openEditSlotModal(id, name, startTime, endTime, isActive) {
+  document.getElementById('modal-slot-title').textContent = 'Edit Time Slot';
+  const form = document.getElementById('slot-form');
+  form.action = `/admin/slots/edit/${id}`;
+  document.getElementById('form-slot-id').value = id;
+  document.getElementById('form-slot-name').value = name;
+  document.getElementById('form-start-time').value = startTime;
+  document.getElementById('form-end-time').value = endTime;
+  document.getElementById('form-slot-active').checked = isActive;
+  
+  document.getElementById('modal-slot-form').classList.remove('hidden');
+}
+
+function closeSlotModal() {
+  document.getElementById('modal-slot-form').classList.add('hidden');
+}
+</script>
+{% endblock %}

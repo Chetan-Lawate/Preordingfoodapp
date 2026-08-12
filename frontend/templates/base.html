@@ -1,0 +1,265 @@
+<!DOCTYPE html>
+<html lang="en" class="h-full bg-slate-100">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}CampusBites | College Canteen Pre-Ordering{% endblock %}</title>
+  
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#fff7ed',
+              100: '#ffedd5',
+              500: '#f97316',
+              600: '#ea580c',
+              700: '#c2410c',
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <!-- Google Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  
+  <!-- Custom CSS -->
+  <link rel="stylesheet" href="{{ url_for('static', filename='css/custom.css') }}">
+</head>
+<body class="h-full text-slate-800 antialiased bg-slate-100 flex overflow-hidden">
+
+  <!-- Desktop Sidebar Navigation -->
+  <aside class="hidden lg:flex flex-col w-64 bg-slate-900 text-white flex-shrink-0 border-r border-slate-800 z-30">
+    
+    <!-- Brand Logo Header -->
+    <div class="p-6 border-b border-slate-800">
+      <a href="{{ url_for('admin_dashboard') if current_user.is_authenticated and current_user.is_admin else url_for('index') }}" class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-2xl bg-gradient-to-tr from-brand-600 to-orange-400 flex items-center justify-center text-white font-extrabold text-xl shadow-lg">
+          ☕
+        </div>
+        <div>
+          <span class="text-xl font-extrabold tracking-tight text-white block">Campus<span class="text-brand-500">Bites</span></span>
+          <span class="text-[10px] uppercase tracking-widest font-bold text-slate-400 block -mt-1">College Cafe Canteen</span>
+        </div>
+      </a>
+    </div>
+
+    <!-- Role-Based Sidebar Navigation Links -->
+    <nav class="flex-1 px-4 py-6 space-y-1.5 overflow-y-auto text-sm font-semibold">
+      
+      <!-- Home Link strictly hidden for Admin users -->
+      {% if not (current_user.is_authenticated and current_user.is_admin) %}
+        <a href="{{ url_for('index') }}" class="flex items-center gap-3 px-4 py-3 rounded-2xl transition hover:bg-slate-800 hover:text-brand-400 {% if request.path == '/' %}bg-brand-500/10 text-brand-500 font-extrabold{% else %}text-slate-300{% endif %}">
+          <span class="text-lg">🏠</span> Home
+        </a>
+      {% endif %}
+      
+      <a href="{{ url_for('user_menu') }}" class="flex items-center gap-3 px-4 py-3 rounded-2xl transition hover:bg-slate-800 hover:text-brand-400 {% if request.path in ['/menu', '/user_menu', '/user-menu'] %}bg-brand-500/10 text-brand-500 font-extrabold{% else %}text-slate-300{% endif %}">
+        <span class="text-lg">🍱</span> Canteen Menu
+      </a>
+
+      <a href="{{ url_for('cart') }}" class="flex items-center justify-between px-4 py-3 rounded-2xl transition hover:bg-slate-800 hover:text-brand-400 {% if request.path == '/cart' %}bg-brand-500/10 text-brand-500 font-extrabold{% else %}text-slate-300{% endif %}">
+        <div class="flex items-center gap-3">
+          <span class="text-lg">🛒</span> Cart
+        </div>
+        <span class="cart-count-badge hidden bg-brand-500 text-white text-xs font-extrabold px-2 py-0.5 rounded-full">0</span>
+      </a>
+
+      {% if current_user.is_authenticated %}
+        <a href="{{ url_for('orders') }}" class="flex items-center gap-3 px-4 py-3 rounded-2xl transition hover:bg-slate-800 hover:text-brand-400 {% if request.path == '/orders' %}bg-brand-500/10 text-brand-500 font-extrabold{% else %}text-slate-300{% endif %}">
+          <span class="text-lg">📦</span> My Pre-Orders
+        </a>
+
+        {% if current_user.is_admin %}
+          <div class="pt-6 pb-2">
+            <span class="px-4 text-[10px] font-extrabold uppercase tracking-wider text-slate-500">Kitchen Administration</span>
+          </div>
+
+          <a href="{{ url_for('admin_dashboard') }}" class="flex items-center gap-3 px-4 py-3 rounded-2xl transition bg-slate-800/80 hover:bg-slate-800 text-brand-400 font-bold border border-slate-700/60 {% if request.path in ['/admin', '/admin/dashboard', '/kitchen-live-orders'] %}ring-2 ring-brand-500{% endif %}">
+            <span class="text-lg">⚡</span> Kitchen Live Orders
+          </a>
+
+          <a href="{{ url_for('manage_items') }}" class="flex items-center gap-3 px-4 py-3 rounded-2xl transition bg-slate-800/80 hover:bg-slate-800 text-slate-200 font-bold border border-slate-700/60 {% if request.path in ['/manage_items', '/manage-items'] %}ring-2 ring-brand-500{% endif %}">
+            <span class="text-lg">📋</span> Manage Items & Archive
+          </a>
+
+          <a href="{{ url_for('manage_slots') }}" class="flex items-center gap-3 px-4 py-3 rounded-2xl transition bg-slate-800/80 hover:bg-slate-800 text-orange-400 font-bold border border-slate-700/60 {% if request.path in ['/manage-slots', '/manage_slots'] %}ring-2 ring-brand-500{% endif %}">
+            <span class="text-lg">⏰</span> Manage Time Slots
+          </a>
+        {% endif %}
+      {% endif %}
+    </nav>
+
+    <!-- Sidebar User Profile -->
+    <div class="p-4 border-t border-slate-800 bg-slate-950/40">
+      {% if current_user.is_authenticated %}
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3 overflow-hidden">
+            <div class="w-9 h-9 rounded-xl bg-brand-500 text-white font-bold flex items-center justify-center flex-shrink-0 text-sm">
+              {{ current_user.username[0]|upper }}
+            </div>
+            <div class="truncate">
+              <span class="block text-xs font-bold text-white truncate">{{ current_user.username }}</span>
+              <span class="block text-[10px] text-slate-400 uppercase tracking-wider">{{ current_user.role }}</span>
+            </div>
+          </div>
+          <a href="{{ url_for('logout') }}" title="Logout" class="text-slate-400 hover:text-red-400 p-2 text-sm">
+            🚪
+          </a>
+        </div>
+      {% else %}
+        <div class="grid grid-cols-2 gap-2">
+          <a href="{{ url_for('login') }}" class="px-3 py-2 rounded-xl bg-slate-800 text-center text-xs font-bold text-white hover:bg-slate-700 transition">Sign In</a>
+          <a href="{{ url_for('register') }}" class="px-3 py-2 rounded-xl bg-brand-500 text-center text-xs font-bold text-white hover:bg-brand-600 transition">Register</a>
+        </div>
+      {% endif %}
+    </div>
+
+  </aside>
+
+  <!-- Main View Area (Header + Content) -->
+  <div class="flex-1 flex flex-col min-w-0 h-full overflow-hidden">
+    
+    <!-- Top Mobile / Laptop Header Bar -->
+    <header class="bg-white border-b border-slate-200 sticky top-0 z-20 px-4 sm:px-6 py-3.5 flex items-center justify-between shadow-xs">
+      
+      <!-- Mobile Menu Button & Brand -->
+      <div class="flex items-center gap-3">
+        <button id="btn-mobile-sidebar-toggle" class="lg:hidden p-2 text-slate-600 hover:text-slate-900 rounded-xl hover:bg-slate-100">
+          <svg class="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
+          </svg>
+        </button>
+
+        <a href="{{ url_for('admin_dashboard') if current_user.is_authenticated and current_user.is_admin else url_for('index') }}" class="lg:hidden flex items-center gap-2">
+          <div class="w-8 h-8 rounded-xl bg-brand-500 text-white font-extrabold flex items-center justify-center text-base">☕</div>
+          <span class="text-lg font-extrabold text-slate-900">Campus<span class="text-brand-500">Bites</span></span>
+        </a>
+      </div>
+
+      <!-- Top Header Right Controls -->
+      <div class="flex items-center gap-3">
+        <a href="{{ url_for('cart') }}" class="relative p-2 rounded-xl text-slate-700 hover:text-brand-600 hover:bg-orange-50 transition border border-slate-200">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+          </svg>
+          <span class="cart-count-badge hidden absolute -top-1.5 -right-1.5 bg-brand-500 text-white text-[10px] font-extrabold w-4 h-4 rounded-full flex items-center justify-center">
+            0
+          </span>
+        </a>
+
+        {% if current_user.is_authenticated %}
+          <span class="text-xs font-bold text-slate-700 hidden sm:inline-block">
+            Hi, {{ current_user.username }}
+          </span>
+        {% else %}
+          <a href="{{ url_for('login') }}" class="text-xs font-extrabold text-brand-600 hover:underline">Sign In</a>
+        {% endif %}
+      </div>
+    </header>
+
+    <!-- Mobile Navigation Drawer Overlay -->
+    <div id="mobile-sidebar-drawer" class="fixed inset-0 z-50 bg-slate-950/60 backdrop-blur-xs hidden transition-opacity lg:hidden">
+      <div class="w-64 bg-slate-900 text-white h-full p-6 flex flex-col justify-between shadow-2xl">
+        <div>
+          <div class="flex items-center justify-between mb-8 pb-4 border-b border-slate-800">
+            <span class="text-lg font-extrabold text-white">CampusBites Cafe</span>
+            <button id="btn-mobile-sidebar-close" class="text-slate-400 hover:text-white font-bold text-xl">&times;</button>
+          </div>
+          <nav class="space-y-3 font-semibold text-sm">
+            {% if not (current_user.is_authenticated and current_user.is_admin) %}
+              <a href="{{ url_for('index') }}" class="block p-2 text-slate-200 hover:text-brand-400">🏠 Home</a>
+            {% endif %}
+            <a href="{{ url_for('user_menu') }}" class="block p-2 text-slate-200 hover:text-brand-400">🍱 Canteen Menu</a>
+            <a href="{{ url_for('cart') }}" class="block p-2 text-slate-200 hover:text-brand-400">🛒 Shopping Cart</a>
+            {% if current_user.is_authenticated %}
+              <a href="{{ url_for('orders') }}" class="block p-2 text-slate-200 hover:text-brand-400">📦 My Pre-Orders</a>
+              {% if current_user.is_admin %}
+                <a href="{{ url_for('admin_dashboard') }}" class="block p-2 text-brand-400 font-bold">⚡ Kitchen Live Orders</a>
+                <a href="{{ url_for('manage_items') }}" class="block p-2 text-slate-200 font-bold">📋 Manage Items & Archive</a>
+                <a href="{{ url_for('manage_slots') }}" class="block p-2 text-orange-400 font-bold">⏰ Manage Time Slots</a>
+              {% endif %}
+            {% endif %}
+          </nav>
+        </div>
+        <div class="pt-4 border-t border-slate-800">
+          {% if current_user.is_authenticated %}
+            <a href="{{ url_for('logout') }}" class="block text-center py-2 bg-red-600/20 text-red-400 font-bold rounded-xl text-xs">Logout</a>
+          {% else %}
+            <a href="{{ url_for('login') }}" class="block text-center py-2 bg-brand-500 text-white font-bold rounded-xl text-xs">Sign In</a>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+
+    <!-- Flash Messages Container -->
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 w-full pt-4">
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          {% for category, message in messages %}
+            <div class="p-4 mb-4 text-xs sm:text-sm font-medium rounded-2xl flex items-center justify-between shadow-xs border ${
+              category == 'danger' ? 'bg-red-50 text-red-800 border-red-200' :
+              category == 'warning' ? 'bg-amber-50 text-amber-800 border-amber-200' :
+              category == 'info' ? 'bg-blue-50 text-blue-800 border-blue-200' :
+              'bg-emerald-50 text-emerald-800 border-emerald-200'
+            }">
+              <span>{{ message|safe }}</span>
+              <button onclick="this.parentElement.remove()" class="text-slate-400 hover:text-slate-700 font-bold ml-4">&times;</button>
+            </div>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+    </div>
+
+    <!-- Main Scrollable Body Content -->
+    <main class="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8">
+      {% block content %}{% endblock %}
+    </main>
+
+  </div>
+
+  <!-- Floating Mobile Cart Bar -->
+  <div id="floating-cart-bar" class="fixed bottom-4 left-4 right-4 z-40 transform translate-y-full hidden transition-transform duration-300 lg:hidden">
+    <a href="{{ url_for('cart') }}" class="flex items-center justify-between bg-slate-900 text-white p-4 rounded-2xl shadow-2xl border border-slate-800">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-brand-500 flex items-center justify-center font-bold text-white shadow-xs">🛒</div>
+        <div>
+          <span class="block text-xs font-semibold text-slate-400">Cart Total</span>
+          <span class="block text-sm font-bold"><span id="floating-cart-count">0</span> items selected</span>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <span id="floating-cart-total" class="text-sm font-extrabold text-brand-500">₹0.00</span>
+        <span class="bg-brand-500 text-white px-3 py-1.5 rounded-xl text-xs font-bold">View Cart →</span>
+      </div>
+    </a>
+  </div>
+
+  <!-- Toast Notification Overlay Container -->
+  <div id="toast-container"></div>
+
+  <!-- Main JavaScript File -->
+  <script src="{{ url_for('static', filename='js/main.js') }}"></script>
+  <script>
+    // Mobile Drawer Toggle
+    const drawer = document.getElementById('mobile-sidebar-drawer');
+    const openBtn = document.getElementById('btn-mobile-sidebar-toggle');
+    const closeBtn = document.getElementById('btn-mobile-sidebar-close');
+    
+    if (openBtn && drawer) {
+      openBtn.addEventListener('click', () => drawer.classList.remove('hidden'));
+    }
+    if (closeBtn && drawer) {
+      closeBtn.addEventListener('click', () => drawer.classList.add('hidden'));
+    }
+  </script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>

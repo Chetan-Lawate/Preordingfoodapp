@@ -1,0 +1,115 @@
+{% extends 'base.html' %}
+
+{% block title %}My Pre-Orders & Pickup Status | CampusBites{% endblock %}
+
+{% block content %}
+<div class="max-w-5xl mx-auto">
+
+  <div class="flex items-center justify-between mb-8">
+    <div>
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-100 text-brand-700 text-xs font-bold mb-2">
+        📦 Live Canteen Pre-Orders
+      </div>
+      <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Order Status Tracker</h1>
+      <p class="text-slate-500 text-xs mt-0.5">Watch your canteen meals move from prep to kitchen cooking and pickup.</p>
+    </div>
+    <a href="{{ url_for('user_menu') }}" class="px-4 py-2.5 rounded-2xl bg-brand-500 hover:bg-brand-600 text-white font-extrabold text-xs shadow-md transition">
+      + New Pre-Order
+    </a>
+  </div>
+
+  {% if orders %}
+    <div class="space-y-6">
+      {% for order in orders %}
+        <div class="bg-white rounded-3xl p-6 border border-slate-200 shadow-xs relative overflow-hidden">
+          
+          <!-- Top Header -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 pb-4 border-b border-slate-100">
+            <div>
+              <div class="flex items-center gap-3">
+                <span class="text-lg font-extrabold text-slate-900">Order #{{ order.id }}</span>
+                
+                <!-- Status Badge -->
+                {% if order.status == 'Ready' %}
+                  <span id="status-badge-{{ order.id }}" class="px-3.5 py-1 text-xs font-extrabold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse-fast">
+                    ⚡ READY FOR PICKUP
+                  </span>
+                {% elif order.status == 'Cooking' %}
+                  <span id="status-badge-{{ order.id }}" class="px-3.5 py-1 text-xs font-extrabold rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                    🔥 COOKING IN KITCHEN
+                  </span>
+                {% elif order.status == 'Completed' %}
+                  <span id="status-badge-{{ order.id }}" class="px-3 py-1 text-xs font-bold rounded-full bg-slate-100 text-slate-700 border border-slate-200">
+                    COMPLETED
+                  </span>
+                {% else %}
+                  <span id="status-badge-{{ order.id }}" class="px-3 py-1 text-xs font-bold rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                    PENDING PREPARATION
+                  </span>
+                {% endif %}
+              </div>
+              <p class="text-xs text-slate-400 mt-1">Placed on {{ order.created_at.strftime('%b %d, %Y at %I:%M %p') }}</p>
+            </div>
+
+            <!-- Target Break Slot -->
+            <div class="bg-slate-50 px-4 py-2 rounded-2xl border border-slate-100 sm:text-right">
+              <span class="block text-[10px] uppercase tracking-wider font-extrabold text-slate-400">Target Break Slot</span>
+              <span class="block text-xs font-extrabold text-brand-600">{{ order.break_time }}</span>
+            </div>
+          </div>
+
+          <!-- Items List Breakdown -->
+          <div class="py-4 space-y-2 text-xs">
+            {% for item in order.items %}
+              <div class="flex items-center justify-between">
+                <div class="flex items-center gap-3">
+                  <div class="w-7 h-7 rounded-lg bg-orange-50 text-brand-600 flex items-center justify-center font-bold text-xs border border-orange-100">
+                    {{ item.quantity }}x
+                  </div>
+                  <span class="font-semibold text-slate-800">{{ item.food_name }}</span>
+                </div>
+                <span class="font-bold text-slate-700">₹{{ "%.2f"|format(item.subtotal) }}</span>
+              </div>
+            {% endfor %}
+          </div>
+
+          <!-- Footer Total & Pickup Instructions -->
+          <div class="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4">
+            {% if order.status == 'Ready' %}
+              <div class="text-xs font-semibold text-emerald-700 bg-emerald-50 px-3 py-2 rounded-xl border border-emerald-200/60 flex items-center gap-2">
+                <span>🎉</span> Show Order #{{ order.id }} at the Express Canteen Counter to claim your food!
+              </div>
+            {% elif order.status == 'Cooking' %}
+              <div class="text-xs font-semibold text-blue-700 bg-blue-50 px-3 py-2 rounded-xl border border-blue-200/60 flex items-center gap-2">
+                <span>🔥</span> Kitchen staff are preparing your meal. It will be ready shortly!
+              </div>
+            {% else %}
+              <div class="text-xs text-slate-400">
+                Order status automatically updates in real-time.
+              </div>
+            {% endif %}
+
+            <div class="flex items-center gap-2">
+              <span class="text-xs text-slate-500 font-medium">Total Paid:</span>
+              <span class="text-xl font-extrabold text-slate-900">₹{{ "%.2f"|format(order.total_price) }}</span>
+            </div>
+          </div>
+
+        </div>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="text-center py-16 bg-white rounded-3xl border border-slate-200">
+      <div class="w-16 h-16 bg-orange-50 text-brand-500 rounded-2xl flex items-center justify-center text-3xl mx-auto mb-4">
+        📦
+      </div>
+      <h3 class="text-lg font-bold text-slate-800">No Pre-Orders Placed Yet</h3>
+      <p class="text-slate-500 text-sm mt-1 max-w-sm mx-auto">Explore our menu and reserve your meal before the next break!</p>
+      <a href="{{ url_for('user_menu') }}" class="inline-block mt-6 px-6 py-3 rounded-2xl bg-brand-500 text-white font-extrabold text-xs shadow-md">
+        Browse Canteen Menu ➔
+      </a>
+    </div>
+  {% endif %}
+
+</div>
+{% endblock %}

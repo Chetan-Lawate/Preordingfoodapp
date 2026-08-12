@@ -1,0 +1,176 @@
+{% extends 'base.html' %}
+
+{% block title %}Kitchen Orders Dashboard | CampusBites Admin{% endblock %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+
+  <!-- Header -->
+  <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+    <div>
+      <div class="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-orange-100 text-brand-700 text-xs font-bold mb-2">
+        ⚡ Live Kitchen Fulfillment
+      </div>
+      <h1 class="text-3xl font-extrabold text-slate-900 tracking-tight">Canteen Orders Dashboard</h1>
+      <p class="text-slate-500 text-xs mt-0.5">Track student pre-orders across cooking stages and break slots.</p>
+    </div>
+    <a href="{{ url_for('manage_items') }}" class="px-5 py-3 rounded-2xl bg-slate-900 hover:bg-slate-800 text-white font-extrabold text-xs shadow-md transition flex items-center justify-center gap-2">
+      <span>📋 Manage Menu & Archive</span>
+    </a>
+  </div>
+
+  <!-- Stat Summary Cards -->
+  <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+    
+    <div class="bg-white p-5 rounded-3xl border border-amber-200 bg-amber-50/30 shadow-xs">
+      <span class="block text-xs font-bold text-amber-700 uppercase tracking-wider">Pending Orders</span>
+      <span class="text-3xl font-extrabold text-amber-600 mt-1 block">{{ pending_orders }}</span>
+    </div>
+
+    <div class="bg-white p-5 rounded-3xl border border-blue-200 bg-blue-50/30 shadow-xs">
+      <span class="block text-xs font-bold text-blue-700 uppercase tracking-wider">🔥 Cooking Now</span>
+      <span class="text-3xl font-extrabold text-blue-600 mt-1 block">{{ cooking_orders }}</span>
+    </div>
+
+    <div class="bg-white p-5 rounded-3xl border border-emerald-200 bg-emerald-50/30 shadow-xs">
+      <span class="block text-xs font-bold text-emerald-700 uppercase tracking-wider">⚡ Ready for Pickup</span>
+      <span class="text-3xl font-extrabold text-emerald-600 mt-1 block">{{ ready_orders }}</span>
+    </div>
+
+    <div class="bg-white p-5 rounded-3xl border border-slate-200 shadow-xs">
+      <span class="block text-xs font-bold text-slate-400 uppercase tracking-wider">Completed</span>
+      <span class="text-3xl font-extrabold text-slate-700 mt-1 block">{{ completed_orders }}</span>
+    </div>
+
+  </div>
+
+  <!-- Live Orders Section -->
+  <div class="bg-white rounded-3xl border border-slate-200 p-6 shadow-xs">
+    
+    <div class="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
+      <div>
+        <h2 class="text-lg font-extrabold text-slate-900">Student Pre-Orders Timeline</h2>
+        <p class="text-slate-500 text-xs">Update order status as kitchen staff preps, cooks, and serves meals.</p>
+      </div>
+
+      <!-- Filter Controls -->
+      <form method="GET" action="{{ url_for('admin_dashboard') }}" class="flex flex-wrap items-center gap-3">
+        <div>
+          <select name="break_time" onchange="this.form.submit()" class="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-slate-50 focus:ring-2 focus:ring-brand-500">
+            <option value="All" {% if selected_time == 'All' %}selected{% endif %}>All Break Times</option>
+            {% for slot in break_times %}
+              <option value="{{ slot }}" {% if selected_time == slot %}selected{% endif %}>{{ slot }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div>
+          <select name="status" onchange="this.form.submit()" class="px-3 py-2 rounded-xl border border-slate-200 text-xs font-bold text-slate-800 bg-slate-50 focus:ring-2 focus:ring-brand-500">
+            <option value="All" {% if selected_status == 'All' %}selected{% endif %}>All Statuses</option>
+            <option value="Pending" {% if selected_status == 'Pending' %}selected{% endif %}>Pending</option>
+            <option value="Cooking" {% if selected_status == 'Cooking' %}selected{% endif %}>Cooking</option>
+            <option value="Ready" {% if selected_status == 'Ready' %}selected{% endif %}>Ready</option>
+            <option value="Completed" {% if selected_status == 'Completed' %}selected{% endif %}>Completed</option>
+          </select>
+        </div>
+      </form>
+    </div>
+
+    <!-- Orders Grid -->
+    {% if orders %}
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
+        {% for order in orders %}
+          <div class="bg-slate-50 rounded-2xl p-5 border border-slate-200 flex flex-col justify-between">
+            <div>
+              <div class="flex items-center justify-between gap-2 mb-3">
+                <div>
+                  <span class="font-extrabold text-slate-900 text-base">Order #{{ order.id }}</span>
+                  <span class="text-xs text-slate-500 block">Student: {{ order.user.username }}</span>
+                </div>
+                
+                <div class="text-right">
+                  {% if order.status == 'Ready' %}
+                    <span id="status-badge-{{ order.id }}" class="px-3 py-1 text-xs font-extrabold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300 animate-pulse-fast">
+                      ⚡ READY FOR PICKUP
+                    </span>
+                  {% elif order.status == 'Cooking' %}
+                    <span id="status-badge-{{ order.id }}" class="px-3 py-1 text-xs font-extrabold rounded-full bg-blue-100 text-blue-800 border border-blue-200">
+                      🔥 COOKING IN KITCHEN
+                    </span>
+                  {% elif order.status == 'Completed' %}
+                    <span id="status-badge-{{ order.id }}" class="px-3 py-1 text-xs font-bold rounded-full bg-slate-200 text-slate-700">
+                      COMPLETED
+                    </span>
+                  {% else %}
+                    <span id="status-badge-{{ order.id }}" class="px-3 py-1 text-xs font-bold rounded-full bg-amber-100 text-amber-800 border border-amber-200">
+                      PENDING PREPARATION
+                    </span>
+                  {% endif %}
+                </div>
+              </div>
+
+              <!-- Break Time Target -->
+              <div class="mb-3 px-3 py-1.5 rounded-xl bg-orange-100/70 border border-orange-200 flex items-center justify-between text-xs font-bold text-brand-800">
+                <span>⏰ Pickup Break Slot:</span>
+                <span>{{ order.break_time }}</span>
+              </div>
+
+              <!-- Item Breakdown -->
+              <div class="space-y-1.5 mb-4 text-xs">
+                {% for item in order.items %}
+                  <div class="flex items-center justify-between border-b border-slate-200/60 pb-1">
+                    <span class="font-semibold text-slate-700">{{ item.quantity }}x {{ item.food_name }}</span>
+                    <span class="text-slate-500">₹{{ "%.2f"|format(item.subtotal) }}</span>
+                  </div>
+                {% endfor %}
+              </div>
+            </div>
+
+            <!-- Action Status Workflow Buttons -->
+            <div class="pt-3 border-t border-slate-200 flex items-center justify-between gap-2">
+              <span class="text-sm font-extrabold text-slate-900">Total: ₹{{ "%.2f"|format(order.total_price) }}</span>
+
+              <div class="flex items-center gap-1.5 flex-wrap justify-end">
+                {% if order.status == 'Pending' %}
+                  <button onclick="updateOrderStatus({{ order.id }}, 'Cooking')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-xs transition">
+                    🔥 Start Cooking
+                  </button>
+                {% endif %}
+
+                {% if order.status in ['Pending', 'Cooking'] %}
+                  <button onclick="updateOrderStatus({{ order.id }}, 'Ready')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-xs transition">
+                    ⚡ Mark Ready
+                  </button>
+                {% endif %}
+
+                {% if order.status != 'Completed' %}
+                  <button onclick="updateOrderStatus({{ order.id }}, 'Completed')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold text-xs shadow-xs transition">
+                    Done
+                  </button>
+                {% endif %}
+
+                {% if order.status != 'Pending' %}
+                  <button onclick="updateOrderStatus({{ order.id }}, 'Pending')" class="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-xl font-bold text-[11px] transition">
+                    Revert
+                  </button>
+                {% endif %}
+              </div>
+            </div>
+
+          </div>
+        {% endfor %}
+      </div>
+    {% else %}
+      <div class="text-center py-12 text-slate-500 text-sm">
+        No orders found matching the filter criteria.
+      </div>
+    {% endif %}
+
+  </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+{% endblock %}

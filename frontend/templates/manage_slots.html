@@ -64,7 +64,7 @@
 
           <!-- Card Footer Actions -->
           <div class="flex items-center justify-between gap-2 pt-4 border-t border-slate-100">
-            <button onclick="openEditSlotModal({{ slot.id }}, {{ slot.slot_name|tojson }}, {{ slot.start_time|tojson }}, {{ slot.end_time|tojson }}, {{ 'true' if slot.is_active else 'false' }})" class="px-3.5 py-2 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold text-xs transition">
+            <button onclick="openEditSlotModal('{{ slot.id }}', {{ slot.slot_name|tojson }}, {{ slot.start_time|tojson }}, {{ slot.end_time|tojson }}, {{ 'true' if slot.is_active else 'false' }})" class="px-3.5 py-2 rounded-xl bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold text-xs transition">
               ✏️ Edit Times
             </button>
 

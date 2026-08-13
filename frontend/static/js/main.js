@@ -255,14 +255,14 @@ function renderCartPage() {
 
         <div class="flex items-center justify-between w-full sm:w-auto gap-6 border-t sm:border-t-0 pt-3 sm:pt-0">
           <div class="flex items-center border border-gray-200 rounded-xl bg-gray-50">
-            <button onclick="updateQuantity(${item.id}, -1)" class="w-8 h-8 flex items-center justify-center font-bold text-gray-600 hover:text-orange-600 transition">-</button>
+            <button onclick="updateQuantity('${String(item.id).replace(/'/g, "\\'")}', -1)" class="w-8 h-8 flex items-center justify-center font-bold text-gray-600 hover:text-orange-600 transition">-</button>
             <span class="px-3 text-sm font-bold text-gray-800">${item.quantity}</span>
-            <button onclick="updateQuantity(${item.id}, 1)" class="w-8 h-8 flex items-center justify-center font-bold text-gray-600 hover:text-orange-600 transition">+</button>
+            <button onclick="updateQuantity('${String(item.id).replace(/'/g, "\\'")}', 1)" class="w-8 h-8 flex items-center justify-center font-bold text-gray-600 hover:text-orange-600 transition">+</button>
           </div>
 
           <div class="text-right">
             <span class="block font-bold text-gray-900 text-base">₹${subtotal.toFixed(2)}</span>
-            <button onclick="removeFromCart(${item.id})" class="text-xs text-red-500 hover:text-red-700 font-semibold underline mt-0.5">Remove</button>
+            <button onclick="removeFromCart('${String(item.id).replace(/'/g, "\\'")}')" class="text-xs text-red-500 hover:text-red-700 font-semibold underline mt-0.5">Remove</button>
           </div>
         </div>
       </div>
@@ -352,6 +352,20 @@ async function processCheckout(e) {
 // Global Event Listeners
 document.addEventListener('DOMContentLoaded', () => {
   updateCartBadge();
+
+  document.querySelectorAll('[data-cart-item]').forEach(button => {
+    button.addEventListener('click', (event) => {
+      const raw = button.getAttribute('data-cart-item');
+      if (!raw) return;
+      try {
+        const item = JSON.parse(raw);
+        addToCart(item, event.currentTarget);
+      } catch (error) {
+        console.error('Invalid cart item payload', error, raw);
+      }
+    });
+  });
+
   if (window.location.pathname === '/cart') {
     renderCartPage();
     const checkoutForm = document.getElementById('checkout-form');

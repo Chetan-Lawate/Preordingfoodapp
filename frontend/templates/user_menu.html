@@ -64,7 +64,7 @@
           </div>
 
           <div class="px-5 pb-5">
-            <button onclick="addToCart({ id: {{ item.id }}, name: {{ item.item_name|tojson }}, price: {{ item.price }}, image_url: {{ item.image_url|tojson }}, category: {{ item.category|tojson }} }, this)" 
+            <button data-cart-item='{"id": {{ item.id|tojson }}, "name": {{ item.item_name|tojson }}, "price": {{ item.price }}, "image_url": {{ item.image_url|tojson }}, "category": {{ item.category|tojson }}}' 
                     class="w-full py-2.5 rounded-xl bg-orange-50 hover:bg-brand-500 text-brand-600 hover:text-white font-bold text-xs transition-all flex items-center justify-center gap-1.5 border border-orange-200/60 hover:border-transparent">
               <span>+ Add to Pre-Order</span>
             </button>

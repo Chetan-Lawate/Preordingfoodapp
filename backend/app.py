@@ -1,491 +1,892 @@
 import os
-from functools import wraps
 from datetime import datetime
-from flask import Flask, render_template, request, redirect, url_for, flash, jsonify
-from flask_login import LoginManager, login_user, logout_user, login_required, current_user
-from config import Config
-from models import db, User, MenuItem, FoodItem, TimeSlot, Order, OrderItem
+from types import SimpleNamespace
+from typing import Any, Dict, List, Optional
 
-# Set paths for frontend templates and static files
+from bson import ObjectId
+from fastapi import FastAPI, Form, HTTPException, Request, Response, status
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from pymongo import MongoClient
+from pymongo.errors import PyMongoError
+from werkzeug.security import check_password_hash, generate_password_hash
+
+try:
+    from config import Config
+except ModuleNotFoundError:  # pragma: no cover
+    from backend.config import Config
+
 BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..'))
 TEMPLATE_DIR = os.path.join(PROJECT_ROOT, 'frontend', 'templates')
 STATIC_DIR = os.path.join(PROJECT_ROOT, 'frontend', 'static')
 
-app = Flask(__name__, template_folder=TEMPLATE_DIR, static_folder=STATIC_DIR)
-app.config.from_object(Config)
+app = FastAPI(title='CampusBites')
+app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
+templates = Jinja2Templates(directory=TEMPLATE_DIR)
 
-# Initialize extensions
-db.init_app(app)
 
-login_manager = LoginManager()
-login_manager.init_app(app)
-login_manager.login_view = 'login'
-login_manager.login_message = 'Please log in to access this page.'
-login_manager.login_message_category = 'warning'
+def template_url_for(name: str, **params: Any):
+    route_aliases = {
+        'admin_add_food': '/admin/menu/add',
+        'admin_edit_food': '/admin/menu/edit/{item_id}',
+        'admin_dashboard': '/admin/dashboard',
+        'manage_items': '/manage_items',
+        'manage_slots': '/manage-slots',
+        'toggle_item_status': '/admin/menu/toggle-status/{item_id}',
+        'toggle_slot_status': '/admin/slots/toggle-status/{slot_id}',
+        'user_menu': '/user-menu',
+        'login': '/login',
+        'register': '/register',
+        'index': '/',
+        'orders': '/orders',
+        'cart': '/cart',
+        'logout': '/logout',
+    }
 
-@login_manager.user_loader
-def load_user(user_id):
-    return db.session.get(User, int(user_id))
-
-# Admin Access Decorator
-def admin_required(f):
-    @wraps(f)
-    def decorated_function(*args, **kwargs):
-        if not current_user.is_authenticated or not current_user.is_admin:
-            flash('Access denied. Administrator privileges required.', 'danger')
-            return redirect(url_for('user_menu'))
-        return f(*args, **kwargs)
-    return decorated_function
-
-# Context Processor for global template variables
-@app.context_processor
-def inject_global_vars():
-    categories = ['All', 'Breakfast', 'Meals', 'Snacks', 'Beverages', 'Desserts']
-    
-    # Dynamically fetch active time slots from database
-    try:
-        active_slots_db = TimeSlot.query.filter_by(is_active=True).order_by(TimeSlot.id).all()
-        if active_slots_db:
-            break_times = [f"{slot.start_time} - {slot.end_time} ({slot.slot_name})" for slot in active_slots_db]
+    path_params: Dict[str, Any] = {}
+    query_params: Dict[str, Any] = {}
+    for key, value in params.items():
+        if value is None or value == '':
+            continue
+        if key in {'next', 'category', 'q', 'status', 'break_time', 'sort', 'page'}:
+            query_params[key] = value
+        elif key == 'food_id':
+            path_params['item_id'] = value
         else:
-            break_times = ['10:00 AM - 10:45 AM (Morning Break)', '01:00 PM - 02:00 PM (Lunch Break)', '03:30 PM - 04:15 PM (Tea Break)']
+            path_params[key] = value
+
+    if name in route_aliases:
+        url = route_aliases[name]
+        for key, value in list(path_params.items()):
+            url = url.replace('{' + key + '}', str(value))
+        if query_params:
+            separator = '&' if '?' in url else '?'
+            url = f"{url}{separator}{'&'.join(f'{k}={v}' for k, v in query_params.items())}"
+        return url
+
+    url = '/' if name == 'index' else f"/{name.replace('_', '-') or ''}"
+    if query_params:
+        separator = '&' if '?' in url else '?'
+        url = f"{url}{separator}{'&'.join(f'{k}={v}' for k, v in query_params.items())}"
+    return url
+
+
+templates.env.globals['get_flashed_messages'] = lambda with_categories=False: []
+templates.env.globals['flash'] = lambda *args, **kwargs: None
+templates.env.globals['url_for'] = template_url_for
+
+mongo_client = None
+mongo_db = None
+mongo_error = None
+try:
+    mongo_client = MongoClient(Config.MONGO_URI, serverSelectionTimeoutMS=2000)
+    mongo_db = mongo_client[Config.MONGO_DB_NAME]
+    mongo_db.command('ping')
+    print(f'INFO: Connected to MongoDB at {Config.MONGO_URI}')
+except Exception as exc:  # pragma: no cover
+    mongo_error = str(exc)
+    mongo_client = None
+    mongo_db = None
+    print(f'INFO: MongoDB not active locally ({exc}). Using in-memory fallback store.')
+
+IN_MEMORY_DB: Dict[str, Any] = {
+    'users': [],
+    'menu': [],
+    'time_slots': [],
+    'orders': [],
+}
+
+
+class InMemoryCursor:
+    def __init__(self, documents: List[Dict[str, Any]]):
+        self._documents = documents
+
+    def __iter__(self):
+        return iter(self._documents)
+
+    def __len__(self):
+        return len(self._documents)
+
+    def __getitem__(self, index):
+        return self._documents[index]
+
+    def limit(self, count: int):
+        return self._documents[:count]
+
+
+class InMemoryCollection:
+    def __init__(self, documents: List[Dict[str, Any]]):
+        self._documents = documents
+
+    def __iter__(self):
+        return iter(self._documents)
+
+    def _matches(self, document: Dict[str, Any], query: Optional[Dict[str, Any]]):
+        if not query:
+            return True
+        if '$or' in query:
+            return any(self._matches(document, clause) for clause in query['$or'])
+        if '$and' in query:
+            return all(self._matches(document, clause) for clause in query['$and'])
+        for key, value in query.items():
+            if key == '$or' or key == '$and':
+                continue
+            if isinstance(value, dict):
+                if '$in' in value and document.get(key) in value['$in']:
+                    continue
+                if '$ne' in value and document.get(key) != value['$ne']:
+                    continue
+                if '$gte' in value and document.get(key, 0) < value['$gte']:
+                    continue
+                if '$lte' in value and document.get(key, 0) > value['$lte']:
+                    continue
+            if document.get(key) != value:
+                return False
+        return True
+
+    def find(self, query: Optional[Dict[str, Any]] = None):
+        matches = [doc for doc in self._documents if self._matches(doc, query or {})]
+        return InMemoryCursor(matches)
+
+    def find_one(self, query: Optional[Dict[str, Any]] = None):
+        matches = self.find(query)
+        return matches[0] if len(matches) > 0 else None
+
+    def count_documents(self, query: Optional[Dict[str, Any]] = None):
+        return len(self.find(query))
+
+    def insert_one(self, document: Dict[str, Any]):
+        if '_id' not in document:
+            document['_id'] = f'generated-{len(self._documents) + 1}'
+        self._documents.append(document)
+        return SimpleNamespace(inserted_id=document['_id'])
+
+    def insert_many(self, documents: List[Dict[str, Any]]):
+        inserted_ids = []
+        for document in documents:
+            if '_id' not in document:
+                document['_id'] = f'generated-{len(self._documents) + 1}'
+            self._documents.append(document)
+            inserted_ids.append(document['_id'])
+        return SimpleNamespace(inserted_ids=inserted_ids)
+
+    def update_one(self, query: Dict[str, Any], update: Dict[str, Any]):
+        for document in self._documents:
+            if self._matches(document, query):
+                if '$set' in update:
+                    document.update(update['$set'])
+                return SimpleNamespace(modified_count=1)
+        return SimpleNamespace(modified_count=0)
+
+
+def get_collection(name: str):
+    if mongo_db is not None:
+        return mongo_db[name]
+    return InMemoryCollection(IN_MEMORY_DB.setdefault(name, []))
+
+
+def make_user_context(user_doc: Dict[str, Any]) -> SimpleNamespace:
+    role = user_doc.get('role', 'Student')
+    user = SimpleNamespace(
+        id=str(user_doc.get('_id', user_doc.get('id', ''))),
+        username=user_doc.get('username', ''),
+        email=user_doc.get('email', ''),
+        role=role,
+        is_authenticated=True,
+    )
+    user.is_admin = role == 'Admin'
+    return user
+
+
+def get_current_user(request: Request) -> Optional[SimpleNamespace]:
+    user_id = request.cookies.get('user_id')
+    if not user_id:
+        return None
+    try:
+        if mongo_db is not None:
+            user_doc = mongo_db.users.find_one({'_id': ObjectId(user_id)})
+        else:
+            user_doc = next((u for u in IN_MEMORY_DB['users'] if str(u.get('_id', u.get('id'))) == str(user_id)), None)
+        if not user_doc:
+            return None
+        return make_user_context(user_doc)
     except Exception:
-        break_times = ['10:00 AM - 10:45 AM (Morning Break)', '01:00 PM - 02:00 PM (Lunch Break)', '03:30 PM - 04:15 PM (Tea Break)']
+        return None
 
-    return dict(categories=categories, break_times=break_times, current_year=datetime.now().year)
 
-# ----------------------------
-# PUBLIC / STUDENT ROUTES
-# ----------------------------
+def get_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
+    if not user_id:
+        return None
+    if mongo_db is not None:
+        try:
+            return mongo_db.users.find_one({'_id': ObjectId(str(user_id))})
+        except Exception:
+            return mongo_db.users.find_one({'_id': str(user_id)})
+    return next((u for u in IN_MEMORY_DB['users'] if str(u.get('_id', u.get('id'))) == str(user_id)), None)
 
-@app.route('/')
-def index():
-    # If Admin is logged in, redirect directly to Kitchen Live Orders
-    if current_user.is_authenticated and current_user.is_admin:
-        return redirect(url_for('admin_dashboard'))
 
-    featured_items = MenuItem.query.filter_by(status='Active').limit(6).all()
-    return render_template('index.html', featured_items=featured_items)
+def get_menu_by_id(menu_id: Any) -> Optional[Dict[str, Any]]:
+    if menu_id is None:
+        return None
+    menu_id = str(menu_id)
+    if mongo_db is not None:
+        try:
+            return mongo_db.menu.find_one({'_id': ObjectId(menu_id)})
+        except Exception:
+            return mongo_db.menu.find_one({'_id': menu_id})
+    return next((item for item in IN_MEMORY_DB['menu'] if str(item.get('_id', item.get('id'))) == menu_id), None)
 
-@app.route('/menu', endpoint='menu')
-@app.route('/user_menu', endpoint='user_menu')
-@app.route('/user-menu', endpoint='user-menu')
-def user_menu():
-    category = request.args.get('category', 'All')
-    search_query = request.args.get('q', '').strip()
-    
-    # Students strictly view ONLY Active items
-    query = MenuItem.query.filter_by(status='Active')
+
+def build_order_view(order: Dict[str, Any]) -> SimpleNamespace:
+    order_id = str(order.get('_id', order.get('id', '')))
+    user_doc = get_user_by_id(order.get('user_id'))
+    display_items = []
+    for item in order.get('items', []):
+        menu_id = item.get('menu_id') or item.get('id')
+        quantity = int(item.get('quantity', 0) or 0)
+        menu_item = get_menu_by_id(menu_id)
+        if menu_item is None:
+            food_name = item.get('food_name') or 'Unknown Item'
+            unit_price = float(item.get('price', 0) or 0)
+        else:
+            food_name = menu_item.get('item_name', 'Unknown Item')
+            unit_price = float(menu_item.get('price', 0) or 0)
+        subtotal = unit_price * quantity
+        display_items.append(SimpleNamespace(
+            food_name=food_name,
+            quantity=quantity,
+            subtotal=subtotal,
+            price=unit_price,
+        ))
+    return SimpleNamespace(
+        id=order_id,
+        user=SimpleNamespace(username=user_doc.get('username', 'Unknown User') if user_doc else 'Unknown User'),
+        status=order.get('status', 'Pending'),
+        break_time=order.get('break_time', ''),
+        total_price=float(order.get('total_price', 0) or 0),
+        created_at=order.get('created_at', datetime.utcnow()),
+        items=display_items,
+    )
+
+
+def normalize_menu_record(item: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(item)
+    if '_id' in normalized and 'id' not in normalized:
+        normalized['id'] = str(normalized['_id'])
+    if 'item_name' in normalized and 'name' not in normalized:
+        normalized['name'] = normalized['item_name']
+    if 'availability' not in normalized:
+        normalized['availability'] = normalized.get('status') == 'Active'
+    if 'status' not in normalized:
+        normalized['status'] = 'Active'
+    normalized.setdefault('description', '')
+    normalized.setdefault('image_url', '')
+    normalized.setdefault('price', 0.0)
+    normalized.setdefault('category', 'Meals')
+    return normalized
+
+
+def normalize_slot_record(slot: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(slot)
+    if '_id' in normalized and 'id' not in normalized:
+        normalized['id'] = str(normalized['_id'])
+    if 'slot_name' in normalized and 'name' not in normalized:
+        normalized['name'] = normalized['slot_name']
+    normalized.setdefault('is_active', True)
+    return normalized
+
+
+def parse_checkbox_flag(value: Any) -> bool:
+    if value is None:
+        return False
+    return str(value).strip().lower() not in {'', '0', 'false', 'off', 'no'}
+
+
+def normalize_template_value(value: Any):
+    if isinstance(value, list):
+        return [normalize_template_value(item) for item in value]
+    if isinstance(value, dict):
+        normalized = dict(value)
+        if '_id' in normalized and 'id' not in normalized:
+            normalized['id'] = str(normalized['_id'])
+        if 'item_id' in normalized and 'id' not in normalized:
+            normalized['id'] = str(normalized['item_id'])
+        if 'item_name' in normalized and 'name' not in normalized:
+            normalized['name'] = normalized['item_name']
+        if 'slot_name' in normalized and 'name' not in normalized:
+            normalized['name'] = normalized['slot_name']
+        if 'item_name' in normalized and 'item_id' not in normalized and '_id' in normalized:
+            normalized['item_id'] = str(normalized['_id'])
+        return normalized
+    return value
+
+
+def render_template(request: Request, template_name: str, **context: Any):
+    user = get_current_user(request)
+    guest_user = SimpleNamespace(
+        id='',
+        username='',
+        email='',
+        role='Student',
+        is_authenticated=False,
+        is_admin=False,
+    )
+    categories = ['All', 'Breakfast', 'Meals', 'Snacks', 'Beverages', 'Desserts']
+    time_slots = list(get_collection('time_slots').find())
+    if time_slots:
+        break_times = [
+            f"{slot.get('start_time')} - {slot.get('end_time')} ({slot.get('slot_name')})"
+            for slot in time_slots
+            if slot.get('is_active') is not False
+        ]
+    else:
+        break_times = [
+            '10:00 AM - 10:45 AM (Morning Break)',
+            '01:00 PM - 02:00 PM (Lunch Break)',
+            '03:30 PM - 04:15 PM (Tea Break)',
+        ]
+    template_context = {
+        'request': request,
+        'request_args': dict(request.query_params),
+        'current_user': user or guest_user,
+        'categories': categories,
+        'break_times': break_times,
+        'current_year': datetime.now().year,
+        **{key: normalize_template_value(value) for key, value in context.items()},
+    }
+    return templates.TemplateResponse(request, template_name, template_context)
+
+
+def require_admin(request: Request):
+    current_user = get_current_user(request)
+    if not current_user or not current_user.is_admin:
+        raise HTTPException(status_code=status.HTTP_303_SEE_OTHER, detail='Admin access required')
+    return current_user
+
+
+def ensure_seed_data():
+    if mongo_db is not None:
+        if mongo_db.users.count_documents({}) == 0:
+            mongo_db.users.insert_many([
+                {
+                    'username': 'Cafeteria Admin',
+                    'email': 'admin@cafeteria.com',
+                    'password_hash': generate_password_hash('admin123'),
+                    'role': 'Admin',
+                    'created_at': datetime.utcnow(),
+                },
+                {
+                    'username': 'Alex Johnson',
+                    'email': 'student@cafeteria.com',
+                    'password_hash': generate_password_hash('student123'),
+                    'role': 'Student',
+                    'created_at': datetime.utcnow(),
+                },
+            ])
+        if mongo_db.menu.count_documents({}) == 0:
+            mongo_db.menu.insert_many([
+                {
+                    'item_name': 'Classic Club Sandwich',
+                    'description': 'Triple-decker toasted sourdough filled with smoked turkey breast, crispy bacon, cheddar, lettuce, & honey mustard.',
+                    'price': 140.0,
+                    'category': 'Snacks',
+                    'image_url': 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=600&auto=format&fit=crop&q=80',
+                    'status': 'Active',
+                    'created_at': datetime.utcnow(),
+                },
+                {
+                    'item_name': 'Crispy Chicken & Avocado Wrap',
+                    'description': 'Seasoned crispy tenderloins wrapped in a spinach tortilla with fresh sliced avocado, tomato, and garlic aioli.',
+                    'price': 160.0,
+                    'category': 'Meals',
+                    'image_url': 'https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=600&auto=format&fit=crop&q=80',
+                    'status': 'Active',
+                    'created_at': datetime.utcnow(),
+                },
+                {
+                    'item_name': 'Molten Chocolate Lava Muffin',
+                    'description': 'Decadent dark chocolate muffin with a warm gooey chocolate center, baked fresh daily.',
+                    'price': 80.0,
+                    'category': 'Desserts',
+                    'image_url': 'https://images.unsplash.com/photo-1607958996333-41aef7caefaa?w=600&auto=format&fit=crop&q=80',
+                    'status': 'Active',
+                    'created_at': datetime.utcnow(),
+                },
+            ])
+        if mongo_db.time_slots.count_documents({}) == 0:
+            mongo_db.time_slots.insert_many([
+                {'slot_name': 'Morning Break', 'start_time': '10:00 AM', 'end_time': '10:45 AM', 'is_active': True, 'created_at': datetime.utcnow()},
+                {'slot_name': 'Lunch Break', 'start_time': '01:00 PM', 'end_time': '02:00 PM', 'is_active': True, 'created_at': datetime.utcnow()},
+                {'slot_name': 'Tea Break', 'start_time': '03:30 PM', 'end_time': '04:15 PM', 'is_active': True, 'created_at': datetime.utcnow()},
+            ])
+    else:
+        if not IN_MEMORY_DB['users']:
+            IN_MEMORY_DB['users'] = [
+                {'_id': 'admin-user', 'username': 'Cafeteria Admin', 'email': 'admin@cafeteria.com', 'password_hash': generate_password_hash('admin123'), 'role': 'Admin'},
+                {'_id': 'student-user', 'username': 'Alex Johnson', 'email': 'student@cafeteria.com', 'password_hash': generate_password_hash('student123'), 'role': 'Student'},
+            ]
+        if not IN_MEMORY_DB['menu']:
+            IN_MEMORY_DB['menu'] = [
+                {'_id': '1', 'item_name': 'Classic Club Sandwich', 'description': 'Classic sandwich', 'price': 140.0, 'category': 'Snacks', 'image_url': 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=600&auto=format&fit=crop&q=80', 'status': 'Active'},
+                {'_id': '2', 'item_name': 'Crispy Chicken & Avocado Wrap', 'description': 'Wrap description', 'price': 160.0, 'category': 'Meals', 'image_url': 'https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=600&auto=format&fit=crop&q=80', 'status': 'Active'},
+                {'_id': '3', 'item_name': 'Molten Chocolate Lava Muffin', 'description': 'Dessert', 'price': 80.0, 'category': 'Desserts', 'image_url': 'https://images.unsplash.com/photo-1607958996333-41aef7caefaa?w=600&auto=format&fit=crop&q=80', 'status': 'Active'},
+            ]
+        if not IN_MEMORY_DB['time_slots']:
+            IN_MEMORY_DB['time_slots'] = [
+                {'_id': '1', 'slot_name': 'Morning Break', 'start_time': '10:00 AM', 'end_time': '10:45 AM', 'is_active': True},
+                {'_id': '2', 'slot_name': 'Lunch Break', 'start_time': '01:00 PM', 'end_time': '02:00 PM', 'is_active': True},
+            ]
+
+
+ensure_seed_data()
+
+
+@app.get('/', name='index')
+async def index(request: Request):
+    current = get_current_user(request)
+    if current and current.is_admin:
+        return RedirectResponse(url='/admin/dashboard', status_code=status.HTTP_303_SEE_OTHER)
+    menu_items = list(get_collection('menu').find({'status': 'Active'}).limit(6))
+    return render_template(request, 'index.html', featured_items=menu_items)
+
+
+@app.get('/menu', name='menu')
+@app.get('/user_menu', name='user_menu')
+@app.get('/user-menu', name='user_menu_hyphen')
+async def user_menu(request: Request):
+    category = request.query_params.get('category', 'All')
+    search_query = (request.query_params.get('q', '') or '').strip()
+    items = list(get_collection('menu').find({'status': 'Active'})) if mongo_db is not None else IN_MEMORY_DB['menu']
     if category != 'All':
-        query = query.filter_by(category=category)
+        items = [item for item in items if item.get('category') == category]
     if search_query:
-        query = query.filter(MenuItem.item_name.ilike(f'%{search_query}%'))
-        
-    items = query.all()
-    return render_template('user_menu.html', items=items, selected_category=category, search_query=search_query)
+        items = [item for item in items if search_query.lower() in (item.get('item_name', '') or '').lower()]
+    return render_template(request, 'user_menu.html', items=items, selected_category=category, search_query=search_query)
 
-@app.route('/api/food')
-def api_food():
-    items = MenuItem.query.filter_by(status='Active').all()
-    return jsonify([item.to_dict() for item in items])
 
-@app.route('/cart')
-def cart():
-    return render_template('cart.html')
+@app.get('/cart', name='cart')
+async def cart(request: Request):
+    return render_template(request, 'cart.html')
 
-@app.route('/checkout', methods=['POST'])
-def checkout():
-    if not current_user.is_authenticated:
-        return jsonify({
-            'success': False, 
-            'message': 'Please sign in to your account to place an order.',
-            'redirect': url_for('login', next='/cart')
-        }), 401
 
-    data = request.get_json(silent=True) or request.form
-    if not data or 'items' not in data or not data['items']:
-        return jsonify({'success': False, 'message': 'Your cart is empty.'}), 400
-    
-    break_time = data.get('break_time')
+@app.get('/orders', name='orders')
+async def orders(request: Request):
+    current = get_current_user(request)
+    if not current:
+        return RedirectResponse(url='/login', status_code=status.HTTP_303_SEE_OTHER)
+    raw_orders = list(get_collection('orders').find({'user_id': current.id})) if mongo_db is not None else [order for order in IN_MEMORY_DB['orders'] if order.get('user_id') == current.id]
+    orders_list = [build_order_view(order) for order in raw_orders]
+    return render_template(request, 'orders.html', orders=orders_list)
+
+
+@app.get('/api/food', name='api_food')
+async def api_food():
+    items = list(get_collection('menu').find({'status': 'Active'})) if mongo_db is not None else [item for item in IN_MEMORY_DB['menu'] if item.get('status') == 'Active']
+    return JSONResponse([{
+        'id': str(item.get('_id', item.get('id', ''))),
+        'item_name': item.get('item_name'),
+        'name': item.get('item_name'),
+        'description': item.get('description'),
+        'price': item.get('price'),
+        'category': item.get('category'),
+        'image_url': item.get('image_url'),
+        'status': item.get('status'),
+    } for item in items])
+
+
+@app.get('/login', name='login')
+async def login_page(request: Request):
+    current = get_current_user(request)
+    if current:
+        return RedirectResponse(url='/admin/dashboard' if current.is_admin else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    return render_template(request, 'login.html')
+
+
+@app.post('/login', name='login_post')
+async def login_post(request: Request, email: str = Form(...), password: str = Form(...), remember: str = Form(default='')):
+    user_doc = None
+    if mongo_db is not None:
+        user_doc = mongo_db.users.find_one({'email': email})
+    else:
+        user_doc = next((u for u in IN_MEMORY_DB['users'] if u.get('email') == email), None)
+    if not user_doc or not check_password_hash(user_doc.get('password_hash', ''), password):
+        return RedirectResponse('/login', status_code=status.HTTP_303_SEE_OTHER)
+
+    response = RedirectResponse(url='/admin/dashboard' if user_doc.get('role') == 'Admin' else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, samesite='lax')
+    return response
+
+
+@app.get('/register', name='register')
+async def register_page(request: Request):
+    current = get_current_user(request)
+    if current:
+        return RedirectResponse(url='/admin/dashboard' if current.is_admin else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    return render_template(request, 'register.html')
+
+
+@app.post('/register', name='register_post')
+async def register_post(request: Request, username: str = Form(...), email: str = Form(...), password: str = Form(...), role: str = Form('Student')):
+    if role not in ['Student', 'Admin']:
+        role = 'Student'
+    if mongo_db is not None:
+        existing = mongo_db.users.find_one({'$or': [{'email': email}, {'username': username}]})
+        if existing:
+            return RedirectResponse('/register', status_code=status.HTTP_303_SEE_OTHER)
+        user_doc = {'username': username, 'email': email, 'password_hash': generate_password_hash(password), 'role': role, 'created_at': datetime.utcnow()}
+        result = mongo_db.users.insert_one(user_doc)
+        user_doc['_id'] = result.inserted_id
+    else:
+        existing = next((u for u in IN_MEMORY_DB['users'] if u.get('email') == email or u.get('username') == username), None)
+        if existing:
+            return RedirectResponse('/register', status_code=status.HTTP_303_SEE_OTHER)
+        user_doc = {'_id': f'user-{len(IN_MEMORY_DB["users"]) + 1}', 'username': username, 'email': email, 'password_hash': generate_password_hash(password), 'role': role}
+        IN_MEMORY_DB['users'].append(user_doc)
+    response = RedirectResponse(url='/admin/dashboard' if user_doc.get('role') == 'Admin' else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, samesite='lax')
+    return response
+
+
+@app.get('/logout', name='logout')
+async def logout(request: Request):
+    response = RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    response.delete_cookie('user_id')
+    return response
+
+
+@app.post('/checkout', name='checkout')
+async def checkout(request: Request):
+    current = get_current_user(request)
+    if not current:
+        return JSONResponse({'success': False, 'message': 'Please sign in to your account to place an order.', 'redirect': '/login'}, status_code=401)
+
+    try:
+        payload = await request.json()
+    except Exception:
+        return JSONResponse({'success': False, 'message': 'Invalid checkout payload.'}, status_code=400)
+
+    if not payload or not payload.get('items'):
+        return JSONResponse({'success': False, 'message': 'Your cart is empty.'}, status_code=400)
+    break_time = payload.get('break_time')
     if not break_time:
-        return jsonify({'success': False, 'message': 'Please select a valid break time for pickup.'}), 400
-
-    items_data = data['items'] # Array of {id, quantity}
+        return JSONResponse({'success': False, 'message': 'Please select a valid break time for pickup.'}, status_code=400)
     total_price = 0.0
-    order_items_to_create = []
+    order_items = []
+    menu_items = list(get_collection('menu').find()) if mongo_db is not None else IN_MEMORY_DB['menu']
+    menu_lookup = {str(item.get('_id', item.get('id'))): item for item in menu_items}
+    for item_info in payload['items']:
+        menu_id = str(item_info.get('id'))
+        qty = int(item_info.get('quantity', 1))
+        menu_item = menu_lookup.get(menu_id)
+        if not menu_item or menu_item.get('status') != 'Active':
+            return JSONResponse({'success': False, 'message': f'Item "{menu_item.get("item_name") if menu_item else "Unknown"}" is currently unavailable.'}, status_code=400)
+        total_price += float(menu_item.get('price', 0)) * qty
+        order_items.append({'menu_id': menu_id, 'quantity': qty})
+    order_doc = {'user_id': current.id, 'total_price': total_price, 'break_time': break_time, 'status': 'Pending', 'created_at': datetime.utcnow(), 'items': order_items}
+    if mongo_db is not None:
+        insert_result = mongo_db.orders.insert_one(order_doc)
+        order_id = str(insert_result.inserted_id)
+    else:
+        order_id = f'order-{len(IN_MEMORY_DB["orders"]) + 1}'
+        order_doc['_id'] = order_id
+        IN_MEMORY_DB['orders'].append(order_doc)
+    return JSONResponse({'success': True, 'message': f'Order #{order_id} placed successfully for pickup at {break_time}!', 'order_id': order_id})
 
-    for item_info in items_data:
-        menu_id = item_info.get('id')
-        qty = item_info.get('quantity', 1)
-        menu_item = db.session.get(MenuItem, int(menu_id)) if menu_id else None
-        
-        if not menu_item or menu_item.status != 'Active':
-            return jsonify({'success': False, 'message': f'Item "{menu_item.item_name if menu_item else "Unknown"}" is currently unavailable.'}), 400
-        
-        item_total = menu_item.price * qty
-        total_price += item_total
-        order_items_to_create.append((menu_id, qty))
 
-    new_order = Order(
-        user_id=current_user.id,
-        total_price=total_price,
-        break_time=break_time,
-        status='Pending'
-    )
-    db.session.add(new_order)
-    db.session.flush()
-
-    for menu_id, qty in order_items_to_create:
-        order_item = OrderItem(
-            order_id=new_order.id,
-            menu_id=menu_id,
-            quantity=qty
-        )
-        db.session.add(order_item)
-
-    db.session.commit()
-
-    return jsonify({
-        'success': True,
-        'message': f'Order #{new_order.id} placed successfully for pickup at {break_time}!',
-        'order_id': new_order.id
-    })
-
-@app.route('/orders')
-@login_required
-def orders():
-    user_orders = Order.query.filter_by(user_id=current_user.id).order_by(Order.created_at.desc()).all()
-    return render_template('orders.html', orders=user_orders)
-
-@app.route('/api/orders/<int:order_id>/status')
-@login_required
-def order_status_api(order_id):
-    order = db.session.get(Order, order_id)
+@app.get('/api/orders/{order_id}/status', name='order_status_api')
+async def order_status_api(request: Request, order_id: str):
+    current = get_current_user(request)
+    if not current:
+        return JSONResponse({'error': 'Unauthorized'}, status_code=401)
+    if mongo_db is not None:
+        order = mongo_db.orders.find_one({'_id': ObjectId(order_id)})
+    else:
+        order = next((o for o in IN_MEMORY_DB['orders'] if str(o.get('_id')) == str(order_id)), None)
     if not order:
-        return jsonify({'error': 'Order not found'}), 404
-    if order.user_id != current_user.id and not current_user.is_admin:
-        return jsonify({'error': 'Unauthorized'}), 403
-    return jsonify({'order_id': order.id, 'status': order.status, 'break_time': order.break_time})
+        return JSONResponse({'error': 'Order not found'}, status_code=404)
+    if str(order.get('user_id')) != str(current.id) and not current.is_admin:
+        return JSONResponse({'error': 'Unauthorized'}, status_code=403)
+    return JSONResponse({'order_id': str(order.get('_id', order_id)), 'status': order.get('status'), 'break_time': order.get('break_time')})
 
-# ----------------------------
-# AUTHENTICATION ROUTES
-# ----------------------------
 
-@app.route('/login', methods=['GET', 'POST'])
-def login():
-    if current_user.is_authenticated:
-        return redirect(url_for('admin_dashboard') if current_user.is_admin else url_for('user_menu'))
-        
-    if request.method == 'POST':
-        email = request.form.get('email', '').strip()
-        password = request.form.get('password', '')
-        remember = True if request.form.get('remember') else False
-        
-        user = User.query.filter_by(email=email).first()
-        if not user or not user.check_password(password):
-            flash('Invalid email or password. Please try again.', 'danger')
-            return redirect(url_for('login'))
-            
-        login_user(user, remember=remember)
-        flash(f'Welcome back, {user.username}!', 'success')
-        
-        next_page = request.args.get('next')
-        if next_page:
-            return redirect(next_page)
-        return redirect(url_for('admin_dashboard') if user.is_admin else url_for('user_menu'))
-
-    return render_template('login.html')
-
-@app.route('/register', methods=['GET', 'POST'])
-def register():
-    if current_user.is_authenticated:
-        return redirect(url_for('admin_dashboard') if current_user.is_admin else url_for('user_menu'))
-
-    if request.method == 'POST':
-        username = request.form.get('username', '').strip()
-        email = request.form.get('email', '').strip()
-        password = request.form.get('password', '')
-        role = request.form.get('role', 'Student')
-        if role not in ['Student', 'Admin']:
-            role = 'Student'
-
-        if not username or not email or not password:
-            flash('Please fill out all required fields.', 'danger')
-            return redirect(url_for('register'))
-
-        existing_user = User.query.filter((User.email == email) | (User.username == username)).first()
-        if existing_user:
-            flash('Email or username already registered.', 'warning')
-            return redirect(url_for('register'))
-
-        new_user = User(username=username, email=email, role=role)
-        new_user.set_password(password)
-        db.session.add(new_user)
-        db.session.commit()
-
-        login_user(new_user)
-        flash('Account registered successfully! Welcome to College Canteen.', 'success')
-        return redirect(url_for('admin_dashboard') if new_user.is_admin else url_for('user_menu'))
-
-    return render_template('register.html')
-
-@app.route('/logout')
-@login_required
-def logout():
-    logout_user()
-    flash('You have been logged out.', 'info')
-    return redirect(url_for('user_menu'))
-
-# ----------------------------
-# ADMIN DASHBOARD, TIME SLOTS & MENU CRUD
-# ----------------------------
-
-@app.route('/admin', endpoint='admin')
-@app.route('/admin/dashboard', endpoint='admin_dashboard')
-@app.route('/kitchen-live-orders', endpoint='kitchen_live_orders')
-@admin_required
-def admin_dashboard():
-    filter_time = request.args.get('break_time', 'All')
-    filter_status = request.args.get('status', 'All')
-
-    query = Order.query
+@app.get('/admin/dashboard', name='admin_dashboard')
+async def admin_dashboard(request: Request):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    filter_time = request.query_params.get('break_time', 'All')
+    filter_status = request.query_params.get('status', 'All')
+    raw_orders = list(get_collection('orders').find()) if mongo_db is not None else IN_MEMORY_DB['orders']
+    orders_list = [build_order_view(order) for order in raw_orders]
+    time_slots = list(get_collection('time_slots').find()) if mongo_db is not None else IN_MEMORY_DB['time_slots']
+    break_times = [
+        f"{slot.get('start_time')} - {slot.get('end_time')} ({slot.get('slot_name')})"
+        for slot in time_slots
+        if slot.get('is_active') is not False
+    ]
     if filter_time != 'All':
-        query = query.filter_by(break_time=filter_time)
+        orders_list = [order for order in orders_list if getattr(order, 'break_time', '') == filter_time]
     if filter_status != 'All':
-        query = query.filter_by(status=filter_status)
+        orders_list = [order for order in orders_list if getattr(order, 'status', '') == filter_status]
+    counts = {
+        'total_orders': len(orders_list),
+        'pending_orders': sum(1 for o in orders_list if getattr(o, 'status', None) == 'Pending'),
+        'cooking_orders': sum(1 for o in orders_list if getattr(o, 'status', None) == 'Cooking'),
+        'ready_orders': sum(1 for o in orders_list if getattr(o, 'status', None) == 'Ready'),
+        'completed_orders': sum(1 for o in orders_list if getattr(o, 'status', None) == 'Completed'),
+    }
+    return render_template(request, 'admin_dashboard.html', orders=orders_list, **counts, selected_time=filter_time, selected_status=filter_status, break_times=break_times)
 
-    orders = query.order_by(Order.created_at.desc()).all()
 
-    # Statistics summary
-    total_orders = Order.query.count()
-    pending_orders = Order.query.filter_by(status='Pending').count()
-    cooking_orders = Order.query.filter_by(status='Cooking').count()
-    ready_orders = Order.query.filter_by(status='Ready').count()
-    completed_orders = Order.query.filter_by(status='Completed').count()
+@app.get('/manage_items', name='manage_items')
+@app.get('/manage-items', name='manage_items_alt')
+async def manage_items(request: Request):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    menu_items = list(get_collection('menu').find()) if mongo_db is not None else IN_MEMORY_DB['menu']
+    active_items = [normalize_menu_record(item) for item in menu_items if item.get('status') == 'Active']
+    deleted_items = [normalize_menu_record(item) for item in menu_items if item.get('status') == 'Deleted']
+    return render_template(request, 'manage_items.html', active_items=active_items, deleted_items=deleted_items, active_count=len(active_items), deleted_count=len(deleted_items))
 
-    return render_template(
-        'admin_dashboard.html',
-        orders=orders,
-        total_orders=total_orders,
-        pending_orders=pending_orders,
-        cooking_orders=cooking_orders,
-        ready_orders=ready_orders,
-        completed_orders=completed_orders,
-        selected_time=filter_time,
-        selected_status=filter_status
-    )
 
-# Manage Time Slots (GET & POST)
-@app.route('/manage-slots', methods=['GET', 'POST'], endpoint='manage_slots')
-@app.route('/manage_slots', methods=['GET', 'POST'])
-@admin_required
-def manage_slots():
-    if request.method == 'POST':
-        slot_name = request.form.get('slot_name', '').strip()
-        start_time = request.form.get('start_time', '').strip()
-        end_time = request.form.get('end_time', '').strip()
-        is_active = True if request.form.get('is_active') else False
+@app.get('/manage-slots', name='manage_slots')
+@app.get('/manage_slots', name='manage_slots_alt')
+async def manage_slots(request: Request):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    slots = list(get_collection('time_slots').find()) if mongo_db is not None else IN_MEMORY_DB['time_slots']
+    normalized_slots = [normalize_slot_record(slot) for slot in slots]
+    return render_template(request, 'manage_slots.html', slots=normalized_slots)
 
-        if not slot_name or not start_time or not end_time:
-            flash('Slot name, start time, and end time are required.', 'danger')
-            return redirect(url_for('manage_slots'))
 
-        new_slot = TimeSlot(
-            slot_name=slot_name,
-            start_time=start_time,
-            end_time=end_time,
-            is_active=is_active
-        )
-        db.session.add(new_slot)
-        db.session.commit()
+@app.post('/manage-slots', name='manage_slots_post')
+async def manage_slots_post(
+    request: Request,
+    slot_id: str = Form(default=''),
+    slot_name: str = Form(default=''),
+    start_time: str = Form(default=''),
+    end_time: str = Form(default=''),
+    is_active: Optional[str] = Form(default=None)
+):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
 
-        flash(f'Time slot "{new_slot.slot_name}" added successfully.', 'success')
-        return redirect(url_for('manage_slots'))
+    if not slot_name or not start_time or not end_time:
+        return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
 
-    slots = TimeSlot.query.order_by(TimeSlot.id).all()
-    return render_template('manage_slots.html', slots=slots)
+    payload = {
+        'slot_name': slot_name,
+        'start_time': start_time,
+        'end_time': end_time,
+        'is_active': parse_checkbox_flag(is_active),
+    }
 
-@app.route('/admin/slots/toggle/<int:slot_id>', methods=['POST'])
-@admin_required
-def toggle_slot_status(slot_id):
-    slot = db.session.get(TimeSlot, slot_id)
-    if not slot:
-        if request.is_json:
-            return jsonify({'success': False, 'message': 'Slot not found'}), 404
-        flash('Time slot not found.', 'danger')
-        return redirect(url_for('manage_slots'))
-
-    slot.is_active = not slot.is_active
-    db.session.commit()
-    status_str = "Active" if slot.is_active else "Inactive"
-
-    if request.is_json:
-        return jsonify({'success': True, 'is_active': slot.is_active, 'status': status_str})
-
-    flash(f'Time slot "{slot.slot_name}" is now marked as {status_str}.', 'success')
-    return redirect(url_for('manage_slots'))
-
-@app.route('/admin/slots/edit/<int:slot_id>', methods=['POST'])
-@admin_required
-def edit_slot(slot_id):
-    slot = db.session.get(TimeSlot, slot_id)
-    if not slot:
-        flash('Time slot not found.', 'danger')
-        return redirect(url_for('manage_slots'))
-
-    slot.slot_name = request.form.get('slot_name', slot.slot_name).strip()
-    slot.start_time = request.form.get('start_time', slot.start_time).strip()
-    slot.end_time = request.form.get('end_time', slot.end_time).strip()
-    slot.is_active = True if request.form.get('is_active') else False
-
-    db.session.commit()
-    flash(f'Time slot "{slot.slot_name}" updated successfully.', 'success')
-    return redirect(url_for('manage_slots'))
-
-@app.route('/manage_items', endpoint='manage_items')
-@app.route('/manage-items')
-@admin_required
-def manage_items():
-    active_items = MenuItem.query.filter_by(status='Active').order_by(MenuItem.category, MenuItem.item_name).all()
-    deleted_items = MenuItem.query.filter_by(status='Deleted').order_by(MenuItem.category, MenuItem.item_name).all()
-    
-    return render_template(
-        'manage_items.html',
-        active_items=active_items,
-        deleted_items=deleted_items,
-        active_count=len(active_items),
-        deleted_count=len(deleted_items)
-    )
-
-@app.route('/admin/menu/toggle-status/<int:item_id>', methods=['POST'])
-@app.route('/admin/food/toggle-status/<int:item_id>', methods=['POST'])
-@admin_required
-def toggle_item_status(item_id):
-    item = db.session.get(MenuItem, item_id)
-    if not item:
-        if request.is_json:
-            return jsonify({'success': False, 'message': 'Item not found'}), 404
-        flash('Menu item not found.', 'danger')
-        return redirect(url_for('manage_items'))
-
-    # Soft Delete Toggle Logic
-    if item.status == 'Active':
-        item.status = 'Deleted'
-        action_msg = f'Item "{item.item_name}" moved to Deleted/Archived Menu.'
+    if slot_id:
+        if mongo_db is not None:
+            mongo_db.time_slots.update_one({'_id': ObjectId(slot_id)}, {'$set': payload})
+        else:
+            for slot in IN_MEMORY_DB['time_slots']:
+                if str(slot.get('_id')) == str(slot_id):
+                    slot.update(payload)
+                    break
     else:
-        item.status = 'Active'
-        action_msg = f'Item "{item.item_name}" restored to Active Menu.'
+        if mongo_db is not None:
+            mongo_db.time_slots.insert_one(payload)
+        else:
+            payload['_id'] = f'slot-{len(IN_MEMORY_DB["time_slots"]) + 1}'
+            IN_MEMORY_DB['time_slots'].append(payload)
+    return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
 
-    db.session.commit()
 
-    if request.is_json:
-        return jsonify({
-            'success': True,
-            'status': item.status,
-            'message': action_msg
-        })
-
-    flash(action_msg, 'success')
-    return redirect(url_for('manage_items'))
-
-@app.route('/admin/menu/add', methods=['GET', 'POST'])
-@app.route('/admin/food/add', methods=['GET', 'POST'])
-@admin_required
-def admin_add_food():
-    if request.method == 'POST':
-        item_name = request.form.get('item_name') or request.form.get('name', '').strip()
-        description = request.form.get('description', '').strip()
-        price = float(request.form.get('price', 0.0))
-        category = request.form.get('category', 'Meals')
-        image_url = request.form.get('image_url', '').strip()
-        status = request.form.get('status', 'Active')
-
-        if not item_name or price <= 0:
-            if request.is_json:
-                return jsonify({'success': False, 'message': 'Food name and valid price required.'}), 400
-            flash('Food name and a valid positive price are required.', 'danger')
-            return redirect(url_for('manage_items'))
-
-        if not image_url:
-            image_url = 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80'
-
-        item = MenuItem(
-            item_name=item_name,
-            description=description,
-            price=price,
-            category=category,
-            image_url=image_url,
-            status=status
-        )
-        db.session.add(item)
-        db.session.commit()
-
-        if request.is_json:
-            return jsonify({'success': True, 'message': f'Food item "{item.item_name}" added to menu.', 'item': item.to_dict()})
-
-        flash(f'Food item "{item.item_name}" added to menu.', 'success')
-        return redirect(url_for('manage_items'))
-
-    return render_template('admin_food_form.html', action='Add', food=None)
-
-@app.route('/admin/menu/edit/<int:item_id>', methods=['GET', 'POST'])
-@app.route('/admin/food/edit/<int:item_id>', methods=['GET', 'POST'])
-@admin_required
-def admin_edit_food(item_id):
-    food = db.session.get(MenuItem, item_id)
-    if not food:
-        flash('Item not found.', 'danger')
-        return redirect(url_for('manage_items'))
-
-    if request.method == 'POST':
-        food.item_name = request.form.get('item_name') or request.form.get('name', food.item_name).strip()
-        food.description = request.form.get('description', food.description).strip()
-        food.price = float(request.form.get('price', food.price))
-        food.category = request.form.get('category', food.category)
-        food.image_url = request.form.get('image_url', food.image_url).strip()
-        if request.form.get('status'):
-            food.status = request.form.get('status')
-
-        db.session.commit()
-
-        if request.is_json:
-            return jsonify({'success': True, 'message': f'Food item "{food.item_name}" updated.', 'item': food.to_dict()})
-
-        flash(f'Food item "{food.item_name}" updated.', 'success')
-        return redirect(url_for('manage_items'))
-
-    return render_template('admin_food_form.html', action='Edit', food=food)
-
-@app.route('/admin/orders/<int:order_id>/status', methods=['POST'])
-@admin_required
-def update_order_status(order_id):
-    order = db.session.get(Order, order_id)
-    if not order:
-        if request.is_json:
-            return jsonify({'success': False, 'message': 'Order not found'}), 404
-        flash('Order not found.', 'danger')
-        return redirect(url_for('admin_dashboard'))
-
-    new_status = request.form.get('status') or (request.get_json() or {}).get('status')
-    
-    if new_status in ['Pending', 'Cooking', 'Ready', 'Completed']:
-        order.status = new_status
-        db.session.commit()
-        if request.is_json:
-            return jsonify({'success': True, 'order_id': order.id, 'status': order.status})
-        flash(f'Order #{order.id} status updated to "{new_status}".', 'success')
+@app.get('/admin/slots/edit/{slot_id}', name='admin_edit_slot_get')
+@app.post('/admin/slots/edit/{slot_id}', name='admin_edit_slot_post')
+async def admin_edit_slot(request: Request, slot_id: str, slot_name: str = Form(default=''), start_time: str = Form(default=''), end_time: str = Form(default=''), is_active: Optional[str] = Form(default=None)):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    if request.method == 'GET':
+        slots = list(get_collection('time_slots').find()) if mongo_db is not None else IN_MEMORY_DB['time_slots']
+        slot = next((item for item in slots if str(item.get('_id')) == str(slot_id)), None)
+        if slot:
+            return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+    if not slot_name or not start_time or not end_time:
+        return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+    payload = {
+        'slot_name': slot_name,
+        'start_time': start_time,
+        'end_time': end_time,
+        'is_active': parse_checkbox_flag(is_active),
+    }
+    if mongo_db is not None:
+        mongo_db.time_slots.update_one({'_id': ObjectId(slot_id)}, {'$set': payload})
     else:
-        if request.is_json:
-            return jsonify({'success': False, 'message': 'Invalid status'}), 400
-        flash('Invalid status update.', 'danger')
+        for slot in IN_MEMORY_DB['time_slots']:
+            if str(slot.get('_id')) == str(slot_id):
+                slot.update(payload)
+                break
+    return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
 
-    return redirect(url_for('admin_dashboard'))
+
+@app.post('/admin/slots/toggle-status/{slot_id}', name='toggle_slot_status')
+async def toggle_slot_status(request: Request, slot_id: str):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse('/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    if mongo_db is not None:
+        slot = mongo_db.time_slots.find_one({'_id': ObjectId(slot_id)})
+        if not slot:
+            return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+        mongo_db.time_slots.update_one({'_id': ObjectId(slot_id)}, {'$set': {'is_active': not bool(slot.get('is_active', True))}})
+    else:
+        for slot in IN_MEMORY_DB['time_slots']:
+            if str(slot.get('_id')) == str(slot_id):
+                slot['is_active'] = not bool(slot.get('is_active', True))
+                break
+    return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get('/admin/menu/add', name='admin_add_food_get')
+@app.post('/admin/menu/add', name='admin_add_food_post')
+async def admin_add_food(
+    request: Request,
+    item_name: str = Form(default=''),
+    name: str = Form(default=''),
+    description: str = Form(default=''),
+    price: float = Form(default=0.0),
+    category: str = Form(default='Meals'),
+    image_url: str = Form(default=''),
+    item_status: str = Form(default='Active'),
+    availability: str = Form(default='1')
+):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    resolved_name = (name or item_name or '').strip()
+    if request.method == 'GET':
+        return render_template(request, 'admin_food_form.html', action='Add', food=None)
+    if not resolved_name or price <= 0:
+        return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+    item = {
+        'item_name': resolved_name,
+        'description': description,
+        'price': price,
+        'category': category,
+        'image_url': image_url or 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80',
+        'status': 'Active' if availability not in ['', '0', 'false', 'False', 'FALSE'] else 'Deleted',
+        'created_at': datetime.utcnow(),
+    }
+    if mongo_db is not None:
+        mongo_db.menu.insert_one(item)
+    else:
+        item['_id'] = f'menu-{len(IN_MEMORY_DB["menu"]) + 1}'
+        IN_MEMORY_DB['menu'].append(item)
+    return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.get('/admin/menu/edit/{item_id}', name='admin_edit_food_get')
+@app.post('/admin/menu/edit/{item_id}', name='admin_edit_food_post')
+async def admin_edit_food(
+    request: Request,
+    item_id: str,
+    item_name: str = Form(default=''),
+    name: str = Form(default=''),
+    description: str = Form(default=''),
+    price: float = Form(default=0.0),
+    category: str = Form(default='Meals'),
+    image_url: str = Form(default=''),
+    item_status: str = Form(default='Active'),
+    availability: str = Form(default='1')
+):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    resolved_name = (name or item_name or '').strip()
+    if request.method == 'GET':
+        item = None
+        if mongo_db is not None:
+            item = mongo_db.menu.find_one({'_id': ObjectId(item_id)})
+        else:
+            item = next((itm for itm in IN_MEMORY_DB['menu'] if str(itm.get('_id')) == str(item_id)), None)
+        if item is not None:
+            item = normalize_menu_record(item)
+        return render_template(request, 'admin_food_form.html', action='Edit', food=item)
+    if not resolved_name or price <= 0:
+        return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+    resolved_status = 'Active' if availability not in ['', '0', 'false', 'False', 'FALSE'] else 'Deleted'
+    if mongo_db is not None:
+        mongo_db.menu.update_one({'_id': ObjectId(item_id)}, {'$set': {'item_name': resolved_name, 'description': description, 'price': price, 'category': category, 'image_url': image_url, 'status': resolved_status}})
+    else:
+        for item in IN_MEMORY_DB['menu']:
+            if str(item.get('_id')) == str(item_id):
+                item['item_name'] = resolved_name
+                item['description'] = description
+                item['price'] = price
+                item['category'] = category
+                item['image_url'] = image_url
+                item['status'] = resolved_status
+                break
+    return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+
+
+@app.post('/admin/orders/{order_id}/status', name='update_order_status')
+async def update_order_status(request: Request, order_id: str):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return JSONResponse({'success': False, 'message': 'Admin access required.'}, status_code=403)
+
+    try:
+        content_type = request.headers.get('content-type', '')
+        if 'application/json' in content_type:
+            payload = await request.json()
+            status_value = payload.get('status') or payload.get('status_value')
+        else:
+            form = await request.form()
+            status_value = form.get('status') or form.get('status_value')
+    except Exception:
+        return JSONResponse({'success': False, 'message': 'Invalid status payload.'}, status_code=400)
+
+    if not status_value:
+        return JSONResponse({'success': False, 'message': 'A valid status is required.'}, status_code=400)
+
+    if mongo_db is not None:
+        mongo_db.orders.update_one({'_id': ObjectId(order_id)}, {'$set': {'status': status_value}})
+    else:
+        for order in IN_MEMORY_DB['orders']:
+            if str(order.get('_id')) == str(order_id):
+                order['status'] = status_value
+                break
+    return JSONResponse({'success': True, 'message': f'Order status updated to {status_value}.'})
+
+
+@app.post('/admin/menu/toggle-status/{item_id}', name='toggle_item_status')
+async def toggle_item_status(request: Request, item_id: str):
+    current = get_current_user(request)
+    if not current or not current.is_admin:
+        return RedirectResponse('/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    if mongo_db is not None:
+        item = mongo_db.menu.find_one({'_id': ObjectId(item_id)})
+        new_status = 'Deleted' if item.get('status') == 'Active' else 'Active'
+        mongo_db.menu.update_one({'_id': ObjectId(item_id)}, {'$set': {'status': new_status}})
+    else:
+        for item in IN_MEMORY_DB['menu']:
+            if str(item.get('_id')) == str(item_id):
+                item['status'] = 'Deleted' if item.get('status') == 'Active' else 'Active'
+                break
+    return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+
+
+def seed_database():
+    ensure_seed_data()
+    print('Database seed complete.')
+
 
 if __name__ == '__main__':
-    with app.app_context():
-        try:
-            db.create_all()
-        except Exception:
-            pass
-    app.run(debug=True, port=5000)
+    import uvicorn
+
+    uvicorn.run(app, host='0.0.0.0', port=5000, reload=False)

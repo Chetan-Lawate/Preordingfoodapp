@@ -132,25 +132,25 @@
 
               <div class="flex items-center gap-1.5 flex-wrap justify-end">
                 {% if order.status == 'Pending' %}
-                  <button onclick="updateOrderStatus({{ order.id }}, 'Cooking')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-xs transition">
+                  <button onclick="updateOrderStatus('{{ order.id }}', 'Cooking')" class="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs shadow-xs transition">
                     🔥 Start Cooking
                   </button>
                 {% endif %}
 
                 {% if order.status in ['Pending', 'Cooking'] %}
-                  <button onclick="updateOrderStatus({{ order.id }}, 'Ready')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-xs transition">
+                  <button onclick="updateOrderStatus('{{ order.id }}', 'Ready')" class="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs shadow-xs transition">
                     ⚡ Mark Ready
                   </button>
                 {% endif %}
 
                 {% if order.status != 'Completed' %}
-                  <button onclick="updateOrderStatus({{ order.id }}, 'Completed')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold text-xs shadow-xs transition">
+                  <button onclick="updateOrderStatus('{{ order.id }}', 'Completed')" class="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-xl font-bold text-xs shadow-xs transition">
                     Done
                   </button>
                 {% endif %}
 
                 {% if order.status != 'Pending' %}
-                  <button onclick="updateOrderStatus({{ order.id }}, 'Pending')" class="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-xl font-bold text-[11px] transition">
+                  <button onclick="updateOrderStatus('{{ order.id }}', 'Pending')" class="px-2.5 py-1.5 bg-amber-100 hover:bg-amber-200 text-amber-800 rounded-xl font-bold text-[11px] transition">
                     Revert
                   </button>
                 {% endif %}
@@ -172,5 +172,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="{{ url_for('static', filename='js/admin.js') }}"></script>
+<script src="/static/js/admin.js"></script>
 {% endblock %}

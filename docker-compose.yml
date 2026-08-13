@@ -1,0 +1,30 @@
+version: '3.9'
+
+services:
+  mongo:
+    image: mongo:7
+    container_name: preordingfoodapp-mongo
+    restart: unless-stopped
+    ports:
+      - "3039:27017"
+    environment:
+      MONGO_INITDB_DATABASE: food_preorder
+    volumes:
+      - mongo_data:/data/db
+
+  app:
+    image: chetan339/preordingfoodapp:latest
+    container_name: preordingfoodapp-container
+    restart: unless-stopped
+    depends_on:
+      - mongo
+    ports:
+      - "5017:5000"
+    environment:
+      MONGO_URI: mongodb://mongo:27017/
+      MONGO_DB_NAME: food_preorder
+      SECRET_KEY: cafeteria_preorder_secret_key_2026
+    command: python -m uvicorn backend.app:app --host 0.0.0.0 --port 5000
+
+volumes:
+  mongo_data:

@@ -73,7 +73,7 @@
                 </td>
                 <td class="p-3 text-right">
                   <div class="flex items-center justify-end gap-2">
-                    <button onclick="openEditModal({{ item.id }}, {{ item.item_name|tojson }}, {{ item.price }}, {{ item.category|tojson }}, {{ item.description|tojson }}, {{ item.image_url|tojson }})" class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold transition">
+                    <button onclick="openEditModal('{{ item.id }}', {{ item.item_name|tojson }}, {{ item.price }}, {{ item.category|tojson }}, {{ item.description|tojson }}, {{ item.image_url|tojson }})" class="px-3 py-1.5 rounded-lg bg-blue-50 text-blue-600 hover:bg-blue-100 font-bold transition">
                       Edit
                     </button>
                     <form method="POST" action="{{ url_for('toggle_item_status', item_id=item.id) }}" class="inline">

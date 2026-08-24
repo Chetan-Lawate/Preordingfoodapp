@@ -14,7 +14,8 @@ RUN apt-get update && apt-get upgrade -y \
 
 COPY backend/requirements.txt ./backend/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir -r ./backend/requirements.txt
+    pip install --no-cache-dir -r ./backend/requirements.txt && \
+    pip install --no-cache-dir --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1"
 
 COPY backend ./backend
 COPY frontend ./frontend

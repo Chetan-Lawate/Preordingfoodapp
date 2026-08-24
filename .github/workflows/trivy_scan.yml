@@ -15,7 +15,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
       - name: Build application image
         run: |
           docker build \
@@ -44,7 +44,7 @@ jobs:
           test -f "GitHub Actions/Trivy Automation/scan-results.json"
       - name: Upload Trivy scan results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8f6c2873703419224a44bd9d1d64914c30 # v4.6.2
         with:
           name: trivy-scan-results
           path: "GitHub Actions/Trivy Automation/scan-results.json"

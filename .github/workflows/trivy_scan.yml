@@ -28,15 +28,23 @@ jobs:
             .
 
       - name: Install Trivy
-        run: |
-          curl --fail --silent --show-error --location \
-            https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
-            | sudo sh -s -- -b /usr/local/bin v0.57.0
+        uses: aquasecurity/setup-trivy@v0.2.5
+        with:
+          version: v0.72.0
+
+      - name: Verify Trivy
+        run: trivy --version
+
+      - name: Download Trivy vulnerability database
+        run: trivy image --download-db-only
+
+      - name: Create output directory
+        run: mkdir -p "GitHub Actions/Trivy Automation"
 
       - name: Scan application image
+        id: trivy-scan
+        continue-on-error: true
         run: |
-          mkdir -p "GitHub Actions/Trivy Automation"
-
           trivy image \
             --format json \
             --ignore-unfixed \
@@ -46,9 +54,22 @@ jobs:
             --output "GitHub Actions/Trivy Automation/scan-results.json" \
             preordingfoodapp:ci
 
+      - name: Verify scan results
+        if: always()
+        run: |
+          ls -lh "GitHub Actions/Trivy Automation/"
+          test -f "GitHub Actions/Trivy Automation/scan-results.json"
+
       - name: Upload Trivy scan results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: trivy-scan-results
-          path: 'GitHub Actions/Trivy Automation/scan-results.json'
+          path: "GitHub Actions/Trivy Automation/scan-results.json"
+          if-no-files-found: error
+
+      - name: Enforce Trivy security gate
+        if: steps.trivy-scan.outcome == 'failure'
+        run: |
+          echo "Trivy found HIGH or CRITICAL vulnerabilities."
+          exit 1

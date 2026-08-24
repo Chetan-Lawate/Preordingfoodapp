@@ -2,10 +2,17 @@ name: CI/CD Pipeline
 
 on:
   push:
-    branches: [ main ]
+    branches: [main]
   pull_request:
-    branches: [ main ]
+    branches: [main]
   workflow_dispatch:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+env:
+  IMAGE_NAME: chetan339/preordingfoodapp
 
 jobs:
   test:
@@ -14,7 +21,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Set up Python
         uses: actions/setup-python@v6
@@ -30,18 +37,124 @@ jobs:
         working-directory: backend
         run: python -m pytest -q test_app.py
 
-  docker:
-    name: Build and push Docker image
+  sonarqube:
+    name: SonarQube Analysis and Quality Gate
     needs: test
     runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: SonarQube Scan
+        uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: https://sonarcloud.io
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          args: |
+            -Dsonar.projectKey=Chetan-Lawate_Preordingfoodapp
+            -Dsonar.organization=chetan-lawate
+            -Dsonar.qualitygate.wait=true
+
+  trivy-fs:
+    name: Trivy Filesystem Scan
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Trivy filesystem scan
+        id: trivy-fs-scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.72.0
+          scan-type: fs
+          scan-ref: .
+          format: table
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Enforce Trivy filesystem security gate
+        if: steps.trivy-fs-scan.outcome == 'failure'
+        run: |
+          echo "Trivy found HIGH or CRITICAL vulnerabilities in the source/dependencies."
+          exit 1
+
+  docker-security:
+    name: Build, Scan and Push Docker Image
+    needs:
+      - sonarqube
+      - trivy-fs
+    runs-on: ubuntu-latest
+
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
+
+      - name: Build application image
+        run: |
+          docker build \
+            --tag ${{ env.IMAGE_NAME }}:${{ github.sha }} \
+            --tag ${{ env.IMAGE_NAME }}:latest \
+            .
+
+      - name: Create Trivy output directory
+        run: |
+          mkdir -p "GitHub Actions/Trivy Automation"
+
+      - name: Scan Docker image with Trivy
+        id: trivy-image-scan
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.72.0
+          image-ref: ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          format: json
+          output: "GitHub Actions/Trivy Automation/scan-results.json"
+          ignore-unfixed: true
+          vuln-type: os,library
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+
+      - name: Verify Trivy report
+        if: always()
+        run: |
+          ls -lh "GitHub Actions/Trivy Automation/"
+          test -f "GitHub Actions/Trivy Automation/scan-results.json"
+
+      - name: Upload Trivy scan results
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: trivy-scan-results-${{ github.run_number }}
+          path: "GitHub Actions/Trivy Automation/scan-results.json"
+          if-no-files-found: error
+
+      - name: Enforce Trivy image security gate
+        if: steps.trivy-image-scan.outcome == 'failure'
+        run: |
+          echo "Trivy found HIGH or CRITICAL vulnerabilities in the Docker image."
+          exit 1
 
       - name: Log in to Docker Hub
         uses: docker/login-action@v3
@@ -49,12 +162,7 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Build and push Docker image
-        uses: docker/build-push-action@v6
-        with:
-          context: .
-          file: ./Dockerfile
-          push: true
-          tags: |
-            chetan339/preordingfoodapp:latest
-            chetan339/preordingfoodapp:${{ github.sha }}
+      - name: Push Docker image
+        run: |
+          docker push ${{ env.IMAGE_NAME }}:${{ github.sha }}
+          docker push ${{ env.IMAGE_NAME }}:latest

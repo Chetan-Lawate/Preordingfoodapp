@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+RUN addgroup --system nonroot \
+    && adduser --system --ingroup nonroot nonroot
+
 WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
@@ -13,13 +16,19 @@ RUN apt-get update && apt-get upgrade -y \
     && rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.lock.txt ./backend/requirements.lock.txt
-RUN pip install --no-cache-dir --only-binary :all: --upgrade pip setuptools wheel && \
+RUN pip install --no-cache-dir --only-binary :all: \
+        pip==26.2.1 setuptools==78.1.1 wheel==0.48.0 && \
     pip install --no-cache-dir --require-hashes -r ./backend/requirements.lock.txt && \
-    pip install --no-cache-dir --only-binary :all: --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1" && \
+    pip install --no-cache-dir --only-binary :all: \
+        setuptools==78.1.1 msgpack==1.2.1 && \
     pip show setuptools msgpack | grep -E "Name|Version"
 
 COPY backend ./backend
 COPY frontend ./frontend
+
+RUN chown -R nonroot:nonroot /app
+
+USER nonroot
 
 EXPOSE 5000
 

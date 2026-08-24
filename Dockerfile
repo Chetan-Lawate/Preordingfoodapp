@@ -12,9 +12,9 @@ RUN apt-get update && apt-get upgrade -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
-COPY backend/requirements.txt ./backend/requirements.txt
+COPY backend/requirements.lock.txt ./backend/requirements.lock.txt
 RUN pip install --no-cache-dir --only-binary :all: --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --only-binary :all: -r ./backend/requirements.txt && \
+    pip install --no-cache-dir --require-hashes -r ./backend/requirements.lock.txt && \
     pip install --no-cache-dir --only-binary :all: --upgrade "setuptools>=78.1.1" "msgpack>=1.2.1" && \
     pip show setuptools msgpack | grep -E "Name|Version"
 

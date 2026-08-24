@@ -59,9 +59,8 @@ jobs:
 
       - name: Analyze with SonarQube
 
-        # You can pin the exact commit or the version.
-        # uses: SonarSource/sonarqube-scan-action@v1.1.0
-        uses: SonarSource/sonarqube-scan-action@7295e71c9583053f5bf40e9d4068a0c974603ec8
+        # Use a current scanner image with Java 17 support.
+        uses: SonarSource/sonarqube-scan-action@v6
         env:
           JAVA_HOME: ${{ steps.setup-java.outputs.path }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Needed to get PR information

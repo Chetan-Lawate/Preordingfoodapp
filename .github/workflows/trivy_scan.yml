@@ -4,37 +4,22 @@ on:
   push:
     branches:
       - main
-    paths-ignore:
-      - 'GitHub Actions/Trivy Automation/**'
-
   pull_request:
     branches:
       - main
-
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   trivy:
-    name: Scan Preordingfoodapp with Trivy
+    name: Scan application image
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v5
-
-      - name: Set Date
-        id: set-date
-        run: |
-          DATE_VALUE="$(date +%m.%d.%Y)"
-          echo "DATE=$DATE_VALUE" >> "$GITHUB_ENV"
-          echo "date=$DATE_VALUE" >> "$GITHUB_OUTPUT"
-
-      - name: Create output directory
-        run: |
-          mkdir -p "GitHub Actions/Trivy Automation"
 
       - name: Build application image
         run: |
@@ -44,58 +29,26 @@ jobs:
 
       - name: Install Trivy
         run: |
-          sudo apt-get update
-          sudo apt-get install -y curl
-
           curl --fail --silent --show-error --location \
             https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh \
             | sudo sh -s -- -b /usr/local/bin v0.57.0
 
-      - name: Log in to GitHub Container Registry
+      - name: Scan application image
         run: |
-          echo "${{ secrets.GHCR_PAT }}" | \
-          docker login ghcr.io \
-          -u "${{ github.actor }}" \
-          --password-stdin
-
-      - name: Download Trivy vulnerability database
-        run: |
-          trivy image --download-db-only
-
-      - name: Run Trivy vulnerability scanner
-        run: |
-          OUTPUT_FILE="GitHub Actions/Trivy Automation/scan-results-${DATE}.json"
+          mkdir -p "GitHub Actions/Trivy Automation"
 
           trivy image \
             --format json \
             --ignore-unfixed \
             --vuln-type os,library \
-            --severity CRITICAL,HIGH,MEDIUM,LOW \
+            --severity HIGH,CRITICAL \
             --exit-code 1 \
-            --output "$OUTPUT_FILE" \
+            --output "GitHub Actions/Trivy Automation/scan-results.json" \
             preordingfoodapp:ci
-
-      - name: Verify scan results exist
-        if: always()
-        run: |
-          ls -lh "GitHub Actions/Trivy Automation/"
 
       - name: Upload Trivy scan results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: trivy-scan-results-${{ github.run_number }}
-          path: 'GitHub Actions/Trivy Automation/scan-results-${{ steps.set-date.outputs.date }}.json'
-
-      - name: Commit scan results
-        if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-
-          git add "GitHub Actions/Trivy Automation/scan-results-${DATE}.json"
-
-          git diff --cached --quiet || \
-            git commit -m "Add Trivy scan results (${DATE}) [skip ci]"
-
-          git push origin HEAD:main
+          name: trivy-scan-results
+          path: 'GitHub Actions/Trivy Automation/scan-results.json'

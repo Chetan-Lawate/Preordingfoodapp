@@ -10,6 +10,7 @@ on:
 permissions:
   contents: read
   pull-requests: read
+  security-events: write
 
 env:
   IMAGE_NAME: chetan339/preordingfoodapp
@@ -66,9 +67,81 @@ jobs:
             -Dsonar.organization=chetan-lawate
             -Dsonar.qualitygate.wait=true
 
+  trivy:
+    name: Trivy Security Scan
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Scan filesystem for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: 1
+
+      - name: Scan Dockerfile configuration
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: config
+          scan-ref: .
+          severity: HIGH,CRITICAL
+          format: sarif
+          output: trivy-config.sarif
+          exit-code: 1
+
+      - name: Upload Trivy configuration results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-config.sarif
+
+  trivy-image:
+    name: Trivy Container Image Scan
+    needs: test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5.0.0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image for scanning
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          tags: preordingfoodapp:scan
+
+      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: preordingfoodapp:scan
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: sarif
+          output: trivy-image.sarif
+          exit-code: 1
+
+      - name: Upload Trivy image results
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: trivy-image.sarif
+
   docker:
     name: Build and Push Docker Image
-    needs: sonarqube
+    needs: [sonarqube, trivy, trivy-image]
     runs-on: ubuntu-latest
 
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'

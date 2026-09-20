@@ -194,14 +194,16 @@ def test_context_and_normalization_existing_values():
 
 
 def test_authenticated_and_invalid_request_branches():
-    register_user()
-    assert client.get('/login', follow_redirects=False).status_code == 303
-    assert client.get('/register', follow_redirects=False).status_code == 303
+    _, student = register_user()
+    session = {'user_id': student['_id']}
+    assert client.get('/login', cookies=session, follow_redirects=False).status_code == 303
+    assert client.get('/register', cookies=session, follow_redirects=False).status_code == 303
     assert client.get('/menu?category=Meals&q=wrap').status_code == 200
     assert client.post('/checkout', data='not-json', headers={'content-type': 'application/json'}).status_code == 400
     assert client.post('/checkout', json={'items': [{'id': 'missing'}]}).status_code == 400
 
-    register_user('Admin')
+    _, admin = register_user('Admin')
+    assert client.get('/', cookies={'user_id': admin['_id']}, follow_redirects=False).status_code == 303
     assert client.get('/admin/dashboard?break_time=Lunch&status=Ready').status_code == 200
     assert client.post('/manage-slots', data={'slot_name': 'Incomplete'}).status_code == 200
     assert client.post('/admin/slots/edit/missing', data={'slot_name': 'Incomplete'}).status_code == 200

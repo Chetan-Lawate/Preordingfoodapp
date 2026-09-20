@@ -2,8 +2,6 @@ import os
 
 
 class Config:
-    SECRET_KEY = os.environ.get('SECRET_KEY', 'cafeteria_preorder_secret_key_2026')
-
     MONGO_URI = os.environ.get('MONGO_URI', 'mongodb://localhost:3039/')
     MONGO_DB_NAME = os.environ.get('MONGO_DB_NAME', 'food_preorder')
     MONGO_COLLECTION_USERS = os.environ.get('MONGO_COLLECTION_USERS', 'users')

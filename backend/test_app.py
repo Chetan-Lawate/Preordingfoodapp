@@ -14,3 +14,9 @@ def test_food_api():
     response = client.get('/api/food')
     assert response.status_code == 200
     assert isinstance(response.json(), list)
+
+
+def test_health_endpoint():
+    response = client.get('/health')
+    assert response.status_code == 200
+    assert response.json() == {'status': 'ok'}

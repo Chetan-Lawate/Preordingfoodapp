@@ -1,5 +1,5 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
 
@@ -59,7 +59,7 @@ def template_url_for(name: str, **params: Any):
 
     if name in route_aliases:
         url = route_aliases[name]
-        for key, value in list(path_params.items()):
+        for key, value in path_params.items():
             url = url.replace('{' + key + '}', str(value))
         if query_params:
             separator = '&' if '?' in url else '?'
@@ -84,12 +84,10 @@ try:
     mongo_client = MongoClient(Config.MONGO_URI, serverSelectionTimeoutMS=2000)
     mongo_db = mongo_client[Config.MONGO_DB_NAME]
     mongo_db.command('ping')
-    print(f'INFO: Connected to MongoDB at {Config.MONGO_URI}')
-except Exception as exc:  # pragma: no cover
+except PyMongoError as exc:  # pragma: no cover
     mongo_error = str(exc)
     mongo_client = None
     mongo_db = None
-    print(f'INFO: MongoDB not active locally ({exc}). Using in-memory fallback store.')
 
 IN_MEMORY_DB: Dict[str, Any] = {
     'users': [],
@@ -212,7 +210,7 @@ def get_current_user(request: Request) -> Optional[SimpleNamespace]:
         if not user_doc:
             return None
         return make_user_context(user_doc)
-    except Exception:
+    except (TypeError, ValueError, PyMongoError):
         return None
 
 
@@ -222,7 +220,7 @@ def get_user_by_id(user_id: Any) -> Optional[Dict[str, Any]]:
     if mongo_db is not None:
         try:
             return mongo_db.users.find_one({'_id': ObjectId(str(user_id))})
-        except Exception:
+        except (TypeError, ValueError, PyMongoError):
             return mongo_db.users.find_one({'_id': str(user_id)})
     return next((u for u in IN_MEMORY_DB['users'] if str(u.get('_id', u.get('id'))) == str(user_id)), None)
 
@@ -234,7 +232,7 @@ def get_menu_by_id(menu_id: Any) -> Optional[Dict[str, Any]]:
     if mongo_db is not None:
         try:
             return mongo_db.menu.find_one({'_id': ObjectId(menu_id)})
-        except Exception:
+        except (TypeError, ValueError, PyMongoError):
             return mongo_db.menu.find_one({'_id': menu_id})
     return next((item for item in IN_MEMORY_DB['menu'] if str(item.get('_id', item.get('id'))) == menu_id), None)
 
@@ -266,7 +264,7 @@ def build_order_view(order: Dict[str, Any]) -> SimpleNamespace:
         status=order.get('status', 'Pending'),
         break_time=order.get('break_time', ''),
         total_price=float(order.get('total_price', 0) or 0),
-        created_at=order.get('created_at', datetime.utcnow()),
+        created_at=order.get('created_at', datetime.now(timezone.utc)),
         items=display_items,
     )
 
@@ -368,23 +366,6 @@ def require_admin(request: Request):
 
 def ensure_seed_data():
     if mongo_db is not None:
-        if mongo_db.users.count_documents({}) == 0:
-            mongo_db.users.insert_many([
-                {
-                    'username': 'Cafeteria Admin',
-                    'email': 'admin@cafeteria.com',
-                    'password_hash': generate_password_hash('admin123'),
-                    'role': 'Admin',
-                    'created_at': datetime.utcnow(),
-                },
-                {
-                    'username': 'Alex Johnson',
-                    'email': 'student@cafeteria.com',
-                    'password_hash': generate_password_hash('student123'),
-                    'role': 'Student',
-                    'created_at': datetime.utcnow(),
-                },
-            ])
         if mongo_db.menu.count_documents({}) == 0:
             mongo_db.menu.insert_many([
                 {
@@ -394,7 +375,7 @@ def ensure_seed_data():
                     'category': 'Snacks',
                     'image_url': 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=600&auto=format&fit=crop&q=80',
                     'status': 'Active',
-                    'created_at': datetime.utcnow(),
+                    'created_at': datetime.now(timezone.utc),
                 },
                 {
                     'item_name': 'Crispy Chicken & Avocado Wrap',
@@ -403,7 +384,7 @@ def ensure_seed_data():
                     'category': 'Meals',
                     'image_url': 'https://images.unsplash.com/photo-1626700051175-6818013e1d4f?w=600&auto=format&fit=crop&q=80',
                     'status': 'Active',
-                    'created_at': datetime.utcnow(),
+                    'created_at': datetime.now(timezone.utc),
                 },
                 {
                     'item_name': 'Molten Chocolate Lava Muffin',
@@ -412,21 +393,16 @@ def ensure_seed_data():
                     'category': 'Desserts',
                     'image_url': 'https://images.unsplash.com/photo-1607958996333-41aef7caefaa?w=600&auto=format&fit=crop&q=80',
                     'status': 'Active',
-                    'created_at': datetime.utcnow(),
+                    'created_at': datetime.now(timezone.utc),
                 },
             ])
         if mongo_db.time_slots.count_documents({}) == 0:
             mongo_db.time_slots.insert_many([
-                {'slot_name': 'Morning Break', 'start_time': '10:00 AM', 'end_time': '10:45 AM', 'is_active': True, 'created_at': datetime.utcnow()},
-                {'slot_name': 'Lunch Break', 'start_time': '01:00 PM', 'end_time': '02:00 PM', 'is_active': True, 'created_at': datetime.utcnow()},
-                {'slot_name': 'Tea Break', 'start_time': '03:30 PM', 'end_time': '04:15 PM', 'is_active': True, 'created_at': datetime.utcnow()},
+                {'slot_name': 'Morning Break', 'start_time': '10:00 AM', 'end_time': '10:45 AM', 'is_active': True, 'created_at': datetime.now(timezone.utc)},
+                {'slot_name': 'Lunch Break', 'start_time': '01:00 PM', 'end_time': '02:00 PM', 'is_active': True, 'created_at': datetime.now(timezone.utc)},
+                {'slot_name': 'Tea Break', 'start_time': '03:30 PM', 'end_time': '04:15 PM', 'is_active': True, 'created_at': datetime.now(timezone.utc)},
             ])
     else:
-        if not IN_MEMORY_DB['users']:
-            IN_MEMORY_DB['users'] = [
-                {'_id': 'admin-user', 'username': 'Cafeteria Admin', 'email': 'admin@cafeteria.com', 'password_hash': generate_password_hash('admin123'), 'role': 'Admin'},
-                {'_id': 'student-user', 'username': 'Alex Johnson', 'email': 'student@cafeteria.com', 'password_hash': generate_password_hash('student123'), 'role': 'Student'},
-            ]
         if not IN_MEMORY_DB['menu']:
             IN_MEMORY_DB['menu'] = [
                 {'_id': '1', 'item_name': 'Classic Club Sandwich', 'description': 'Classic sandwich', 'price': 140.0, 'category': 'Snacks', 'image_url': 'https://images.unsplash.com/photo-1528735602780-2552fd46c7af?w=600&auto=format&fit=crop&q=80', 'status': 'Active'},
@@ -450,6 +426,11 @@ async def index(request: Request):
         return RedirectResponse(url='/admin/dashboard', status_code=status.HTTP_303_SEE_OTHER)
     menu_items = list(get_collection('menu').find({'status': 'Active'}).limit(6))
     return render_template(request, 'index.html', featured_items=menu_items)
+
+
+@app.get('/health', include_in_schema=False)
+async def health():
+    return {'status': 'ok'}
 
 
 @app.get('/menu', name='menu')
@@ -515,7 +496,7 @@ async def login_post(request: Request, email: str = Form(...), password: str = F
         return RedirectResponse('/login', status_code=status.HTTP_303_SEE_OTHER)
 
     response = RedirectResponse(url='/admin/dashboard' if user_doc.get('role') == 'Admin' else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
-    response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, samesite='lax')
+    response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, secure=True, samesite='lax')
     return response
 
 
@@ -535,7 +516,7 @@ async def register_post(request: Request, username: str = Form(...), email: str 
         existing = mongo_db.users.find_one({'$or': [{'email': email}, {'username': username}]})
         if existing:
             return RedirectResponse('/register', status_code=status.HTTP_303_SEE_OTHER)
-        user_doc = {'username': username, 'email': email, 'password_hash': generate_password_hash(password), 'role': role, 'created_at': datetime.utcnow()}
+        user_doc = {'username': username, 'email': email, 'password_hash': generate_password_hash(password), 'role': role, 'created_at': datetime.now(timezone.utc)}
         result = mongo_db.users.insert_one(user_doc)
         user_doc['_id'] = result.inserted_id
     else:
@@ -545,7 +526,7 @@ async def register_post(request: Request, username: str = Form(...), email: str 
         user_doc = {'_id': f'user-{len(IN_MEMORY_DB["users"]) + 1}', 'username': username, 'email': email, 'password_hash': generate_password_hash(password), 'role': role}
         IN_MEMORY_DB['users'].append(user_doc)
     response = RedirectResponse(url='/admin/dashboard' if user_doc.get('role') == 'Admin' else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
-    response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, samesite='lax')
+    response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, secure=True, samesite='lax')
     return response
 
 
@@ -564,7 +545,7 @@ async def checkout(request: Request):
 
     try:
         payload = await request.json()
-    except Exception:
+    except ValueError:
         return JSONResponse({'success': False, 'message': 'Invalid checkout payload.'}, status_code=400)
 
     if not payload or not payload.get('items'):
@@ -584,7 +565,7 @@ async def checkout(request: Request):
             return JSONResponse({'success': False, 'message': f'Item "{menu_item.get("item_name") if menu_item else "Unknown"}" is currently unavailable.'}, status_code=400)
         total_price += float(menu_item.get('price', 0)) * qty
         order_items.append({'menu_id': menu_id, 'quantity': qty})
-    order_doc = {'user_id': current.id, 'total_price': total_price, 'break_time': break_time, 'status': 'Pending', 'created_at': datetime.utcnow(), 'items': order_items}
+    order_doc = {'user_id': current.id, 'total_price': total_price, 'break_time': break_time, 'status': 'Pending', 'created_at': datetime.now(timezone.utc), 'items': order_items}
     if mongo_db is not None:
         insert_result = mongo_db.orders.insert_one(order_doc)
         order_id = str(insert_result.inserted_id)
@@ -779,7 +760,7 @@ async def admin_add_food(
         'category': category,
         'image_url': image_url or 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80',
         'status': 'Active' if availability not in ['', '0', 'false', 'False', 'FALSE'] else 'Deleted',
-        'created_at': datetime.utcnow(),
+        'created_at': datetime.now(timezone.utc),
     }
     if mongo_db is not None:
         mongo_db.menu.insert_one(item)
@@ -848,7 +829,7 @@ async def update_order_status(request: Request, order_id: str):
         else:
             form = await request.form()
             status_value = form.get('status') or form.get('status_value')
-    except Exception:
+    except ValueError:
         return JSONResponse({'success': False, 'message': 'Invalid status payload.'}, status_code=400)
 
     if not status_value:
@@ -883,10 +864,9 @@ async def toggle_item_status(request: Request, item_id: str):
 
 def seed_database():
     ensure_seed_data()
-    print('Database seed complete.')
 
 
 if __name__ == '__main__':
     import uvicorn
 
-    uvicorn.run(app, host='0.0.0.0', port=5000, reload=False)
+    uvicorn.run(app, host='127.0.0.1', port=5000, reload=False)

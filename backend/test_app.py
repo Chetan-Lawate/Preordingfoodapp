@@ -193,6 +193,23 @@ def test_context_and_normalization_existing_values():
     assert slot['is_active'] is False
 
 
+def test_authenticated_and_invalid_request_branches():
+    register_user()
+    assert client.get('/login', follow_redirects=False).status_code == 303
+    assert client.get('/register', follow_redirects=False).status_code == 303
+    assert client.get('/menu?category=Meals&q=wrap').status_code == 200
+    assert client.post('/checkout', data='not-json', headers={'content-type': 'application/json'}).status_code == 400
+    assert client.post('/checkout', json={'items': [{'id': 'missing'}]}).status_code == 400
+
+    register_user('Admin')
+    assert client.get('/admin/dashboard?break_time=Lunch&status=Ready').status_code == 200
+    assert client.post('/manage-slots', data={'slot_name': 'Incomplete'}).status_code == 200
+    assert client.post('/admin/slots/edit/missing', data={'slot_name': 'Incomplete'}).status_code == 200
+    assert client.post('/admin/menu/add', data={'name': '', 'price': '0'}).status_code == 200
+    assert client.post('/admin/menu/edit/missing', data={'name': '', 'price': '0'}).status_code == 200
+    assert client.post('/admin/orders/missing/status', data={}).status_code == 400
+
+
 def test_admin_dashboard_and_menu_crud():
     response, _ = register_user('Admin')
     assert response.headers['location'] == '/admin/dashboard'

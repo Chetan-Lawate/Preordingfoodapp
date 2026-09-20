@@ -13,6 +13,7 @@ __pycache__/
 *.so
 .coverage
 coverage.xml
+coverage.json
 htmlcov/
 
 # Databases & SQLite

@@ -55,6 +55,18 @@ jobs:
           distribution: temurin
           java-version: "17"
 
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r backend/requirements.txt
+
+      - name: Generate coverage report
+        working-directory: backend
+        run: python -m pytest --cov=. --cov-report=xml:../coverage.xml -q test_app.py
+
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0
         env:
@@ -69,6 +81,7 @@ jobs:
             -Dsonar.tests=backend
             -Dsonar.test.inclusions=backend/test_*.py
             -Dsonar.exclusions=**/__pycache__/**,**/*.pyc,frontend/static/**
+            -Dsonar.python.coverage.reportPaths=coverage.xml
             -Dsonar.qualitygate.wait=true
 
   trivy:

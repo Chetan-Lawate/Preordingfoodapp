@@ -11,6 +11,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 *.so
+.coverage
+coverage.xml
+htmlcov/
 
 # Databases & SQLite
 *.db

@@ -129,6 +129,7 @@ def test_in_memory_cursor_and_empty_collection_paths():
     assert cursor[0]['id'] == 1
     assert cursor.limit(1) == [{'id': 1}]
     collection = app_module.InMemoryCollection([])
+    assert list(collection) == []
     assert collection.find_one({'id': 1}) is None
     assert collection.count_documents({}) == 0
     assert collection.update_one({'id': 1}, {'$set': {'name': 'missing'}}).modified_count == 0

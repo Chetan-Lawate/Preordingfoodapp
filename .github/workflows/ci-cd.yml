@@ -65,7 +65,7 @@ jobs:
 
       - name: Generate coverage report
         working-directory: backend
-        run: python -m pytest --cov=. --cov-report=xml:../coverage.xml -q test_app.py
+        run: python -m pytest --cov=. --cov-branch --cov-report=xml:../coverage.xml -q test_app.py
 
       - name: SonarQube Scan
         uses: SonarSource/sonarqube-scan-action@7006c4492b2e0ee0f816d36501671557c97f5995 # v8.1.0

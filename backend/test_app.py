@@ -123,6 +123,76 @@ def test_payload_and_persistence_helpers():
     assert app_module.IN_MEMORY_DB['menu'][-1]['item_name'] == 'Iced Tea'
 
 
+def test_in_memory_cursor_and_empty_collection_paths():
+    cursor = app_module.InMemoryCursor([{'id': 1}, {'id': 2}])
+    assert len(cursor) == 2
+    assert cursor[0]['id'] == 1
+    assert cursor.limit(1) == [{'id': 1}]
+    collection = app_module.InMemoryCollection([])
+    assert collection.find_one({'id': 1}) is None
+    assert collection.count_documents({}) == 0
+    assert collection.update_one({'id': 1}, {'$set': {'name': 'missing'}}).modified_count == 0
+    collection.insert_many([{}, {}])
+    assert len(collection.find()) == 2
+
+
+def test_normalization_and_lookup_fallbacks():
+    assert app_module.get_user_by_id(None) is None
+    assert app_module.get_user_by_id('missing') is None
+    assert app_module.get_menu_by_id(None) is None
+    assert app_module.get_menu_by_id('missing') is None
+    assert app_module.get_current_user(type('Request', (), {'cookies': {}})()) is None
+
+    menu = app_module.normalize_menu_record({'_id': 'menu-1', 'item_name': 'Soup'})
+    assert menu['availability'] is False
+    assert menu['status'] == 'Active'
+    assert menu['description'] == ''
+    slot = app_module.normalize_slot_record({'_id': 'slot-1', 'slot_name': 'Lunch'})
+    assert slot['id'] == 'slot-1'
+    assert slot['name'] == 'Lunch'
+    assert slot['is_active'] is True
+
+
+def test_order_view_handles_missing_menu_item():
+    order = {
+        '_id': 'order-1',
+        'user_id': 'missing',
+        'items': [{'id': 'missing', 'food_name': 'Removed', 'price': 10, 'quantity': 2}],
+    }
+    view = app_module.build_order_view(order)
+    assert view.user.username == 'Unknown User'
+    assert view.items[0].food_name == 'Removed'
+    assert view.items[0].subtotal == 20
+
+
+def test_template_url_fallbacks_and_mapping_defaults():
+    assert app_module.template_url_for('custom_page') == '/custom-page'
+    assert app_module.template_url_for('custom_page', page=2) == '/custom-page?page=2'
+    assert app_module.template_url_for('login') == '/login'
+    assert app_module.append_query_params('/search?existing=1', {'page': 2}) == '/search?existing=1&page=2'
+    assert app_module.normalize_mapping({'item_id': 'item-2'})['id'] == 'item-2'
+    assert app_module.normalize_mapping({'slot_name': 'Morning'})['name'] == 'Morning'
+
+
+def test_context_and_normalization_existing_values():
+    user = app_module.make_user_context({'id': 'user-1', 'username': 'Student', 'role': 'Student'})
+    assert user.id == 'user-1'
+    assert user.is_admin is False
+    client.cookies.set('user_id', user.id)
+    app_module.IN_MEMORY_DB['users'].append({'_id': user.id, 'username': 'Student', 'role': 'Student'})
+    assert app_module.get_current_user(type('Request', (), {'cookies': {'user_id': user.id}})()).username == 'Student'
+    assert app_module.get_collection('custom').find_one() is None
+
+    menu = app_module.normalize_menu_record({
+        'id': 'menu-1', 'name': 'Soup', 'availability': True, 'status': 'Active',
+        'description': 'Hot', 'image_url': '/soup.jpg', 'price': 10, 'category': 'Meals',
+    })
+    assert menu['name'] == 'Soup'
+    slot = app_module.normalize_slot_record({'id': 'slot-1', 'name': 'Lunch', 'is_active': False})
+    assert slot['name'] == 'Lunch'
+    assert slot['is_active'] is False
+
+
 def test_admin_dashboard_and_menu_crud():
     response, _ = register_user('Admin')
     assert response.headers['location'] == '/admin/dashboard'

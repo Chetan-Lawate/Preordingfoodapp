@@ -21,6 +21,12 @@ BASE_DIR = os.path.abspath(os.path.dirname(__file__))
 PROJECT_ROOT = os.path.abspath(os.path.join(BASE_DIR, '..'))
 TEMPLATE_DIR = os.path.join(PROJECT_ROOT, 'frontend', 'templates')
 STATIC_DIR = os.path.join(PROJECT_ROOT, 'frontend', 'static')
+ADMIN_DASHBOARD_URL = '/admin/dashboard'
+MANAGE_ITEMS_URL = '/manage_items'
+MANAGE_SLOTS_URL = '/manage-slots'
+LOGIN_URL = '/login'
+REGISTER_URL = '/register'
+USER_MENU_URL = '/user_menu'
 
 app = FastAPI(title='CampusBites')
 app.mount('/static', StaticFiles(directory=STATIC_DIR), name='static')
@@ -31,14 +37,14 @@ def template_url_for(name: str, **params: Any):
     route_aliases = {
         'admin_add_food': '/admin/menu/add',
         'admin_edit_food': '/admin/menu/edit/{item_id}',
-        'admin_dashboard': '/admin/dashboard',
-        'manage_items': '/manage_items',
-        'manage_slots': '/manage-slots',
+        'admin_dashboard': ADMIN_DASHBOARD_URL,
+        'manage_items': MANAGE_ITEMS_URL,
+        'manage_slots': MANAGE_SLOTS_URL,
         'toggle_item_status': '/admin/menu/toggle-status/{item_id}',
         'toggle_slot_status': '/admin/slots/toggle-status/{slot_id}',
         'user_menu': '/user-menu',
-        'login': '/login',
-        'register': '/register',
+        'login': LOGIN_URL,
+        'register': REGISTER_URL,
         'index': '/',
         'orders': '/orders',
         'cart': '/cart',
@@ -61,16 +67,19 @@ def template_url_for(name: str, **params: Any):
         url = route_aliases[name]
         for key, value in path_params.items():
             url = url.replace('{' + key + '}', str(value))
-        if query_params:
-            separator = '&' if '?' in url else '?'
-            url = f"{url}{separator}{'&'.join(f'{k}={v}' for k, v in query_params.items())}"
+        url = append_query_params(url, query_params)
         return url
 
     url = '/' if name == 'index' else f"/{name.replace('_', '-') or ''}"
-    if query_params:
-        separator = '&' if '?' in url else '?'
-        url = f"{url}{separator}{'&'.join(f'{k}={v}' for k, v in query_params.items())}"
-    return url
+    return append_query_params(url, query_params)
+
+
+def append_query_params(url: str, query_params: Dict[str, Any]) -> str:
+    if not query_params:
+        return url
+    separator = '&' if '?' in url else '?'
+    values = '&'.join(f'{key}={value}' for key, value in query_params.items())
+    return f'{url}{separator}{values}'
 
 
 templates.env.globals['get_flashed_messages'] = lambda with_categories=False: []
@@ -128,21 +137,24 @@ class InMemoryCollection:
             return any(self._matches(document, clause) for clause in query['$or'])
         if '$and' in query:
             return all(self._matches(document, clause) for clause in query['$and'])
-        for key, value in query.items():
-            if key == '$or' or key == '$and':
-                continue
-            if isinstance(value, dict):
-                if '$in' in value and document.get(key) in value['$in']:
-                    continue
-                if '$ne' in value and document.get(key) != value['$ne']:
-                    continue
-                if '$gte' in value and document.get(key, 0) < value['$gte']:
-                    continue
-                if '$lte' in value and document.get(key, 0) > value['$lte']:
-                    continue
-            if document.get(key) != value:
-                return False
-        return True
+        return all(self._matches_condition(document, key, value) for key, value in query.items())
+
+    @staticmethod
+    def _matches_condition(document: Dict[str, Any], key: str, value: Any) -> bool:
+        if key in {'$or', '$and'}:
+            return True
+        if not isinstance(value, dict):
+            return document.get(key) == value
+        actual = document.get(key)
+        if '$in' in value:
+            return actual in value['$in']
+        if '$ne' in value:
+            return actual != value['$ne']
+        if '$gte' in value and actual < value['$gte']:
+            return False
+        if '$lte' in value and actual > value['$lte']:
+            return False
+        return '$gte' in value or '$lte' in value
 
     def find(self, query: Optional[Dict[str, Any]] = None):
         matches = [doc for doc in self._documents if self._matches(doc, query or {})]
@@ -302,23 +314,75 @@ def parse_checkbox_flag(value: Any) -> bool:
     return str(value).strip().lower() not in {'', '0', 'false', 'off', 'no'}
 
 
+def build_slot_payload(slot_name: str, start_time: str, end_time: str, is_active: Optional[str]) -> Dict[str, Any]:
+    return {
+        'slot_name': slot_name,
+        'start_time': start_time,
+        'end_time': end_time,
+        'is_active': parse_checkbox_flag(is_active),
+    }
+
+
+def save_slot(slot_id: str, payload: Dict[str, Any]) -> None:
+    collection = get_collection('time_slots')
+    if mongo_db is not None:
+        if slot_id:
+            collection.update_one({'_id': ObjectId(slot_id)}, {'$set': payload})
+        else:
+            collection.insert_one(payload)
+        return
+    if slot_id:
+        for slot in IN_MEMORY_DB['time_slots']:
+            if str(slot.get('_id')) == str(slot_id):
+                slot.update(payload)
+                return
+    payload['_id'] = f'slot-{len(IN_MEMORY_DB["time_slots"]) + 1}'
+    IN_MEMORY_DB['time_slots'].append(payload)
+
+
+def build_menu_payload(name: str, item_name: str, description: str, price: float, category: str, image_url: str, availability: str) -> Dict[str, Any]:
+    return {
+        'item_name': (name or item_name or '').strip(),
+        'description': description,
+        'price': price,
+        'category': category,
+        'image_url': image_url or 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80',
+        'status': 'Active' if parse_checkbox_flag(availability) else 'Deleted',
+    }
+
+
+def save_menu_item(item_id: str, item: Dict[str, Any]) -> None:
+    collection = get_collection('menu')
+    if mongo_db is not None:
+        if item_id:
+            collection.update_one({'_id': ObjectId(item_id)}, {'$set': item})
+        else:
+            collection.insert_one(item)
+        return
+    if item_id:
+        for stored_item in IN_MEMORY_DB['menu']:
+            if str(stored_item.get('_id')) == str(item_id):
+                stored_item.update(item)
+                return
+    item['_id'] = f'menu-{len(IN_MEMORY_DB["menu"]) + 1}'
+    IN_MEMORY_DB['menu'].append(item)
+
+
+def normalize_mapping(value: Dict[str, Any]) -> Dict[str, Any]:
+    normalized = dict(value)
+    aliases = (('_id', 'id'), ('item_id', 'id'), ('item_name', 'name'), ('slot_name', 'name'))
+    for source, target in aliases:
+        if source in normalized and target not in normalized:
+            normalized[target] = str(normalized[source]) if source.endswith('id') else normalized[source]
+    if 'item_name' in normalized and 'item_id' not in normalized and '_id' in normalized:
+        normalized['item_id'] = str(normalized['_id'])
+    return normalized
+
+
 def normalize_template_value(value: Any):
     if isinstance(value, list):
         return [normalize_template_value(item) for item in value]
-    if isinstance(value, dict):
-        normalized = dict(value)
-        if '_id' in normalized and 'id' not in normalized:
-            normalized['id'] = str(normalized['_id'])
-        if 'item_id' in normalized and 'id' not in normalized:
-            normalized['id'] = str(normalized['item_id'])
-        if 'item_name' in normalized and 'name' not in normalized:
-            normalized['name'] = normalized['item_name']
-        if 'slot_name' in normalized and 'name' not in normalized:
-            normalized['name'] = normalized['slot_name']
-        if 'item_name' in normalized and 'item_id' not in normalized and '_id' in normalized:
-            normalized['item_id'] = str(normalized['_id'])
-        return normalized
-    return value
+    return normalize_mapping(value) if isinstance(value, dict) else value
 
 
 def render_template(request: Request, template_name: str, **context: Any):
@@ -423,7 +487,7 @@ ensure_seed_data()
 async def index(request: Request):
     current = get_current_user(request)
     if current and current.is_admin:
-        return RedirectResponse(url='/admin/dashboard', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=ADMIN_DASHBOARD_URL, status_code=status.HTTP_303_SEE_OTHER)
     menu_items = list(get_collection('menu').find({'status': 'Active'}).limit(6))
     return render_template(request, 'index.html', featured_items=menu_items)
 
@@ -434,7 +498,7 @@ async def health():
 
 
 @app.get('/menu', name='menu')
-@app.get('/user_menu', name='user_menu')
+@app.get(USER_MENU_URL, name='user_menu')
 @app.get('/user-menu', name='user_menu_hyphen')
 async def user_menu(request: Request):
     category = request.query_params.get('category', 'All')
@@ -456,7 +520,7 @@ async def cart(request: Request):
 async def orders(request: Request):
     current = get_current_user(request)
     if not current:
-        return RedirectResponse(url='/login', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=LOGIN_URL, status_code=status.HTTP_303_SEE_OTHER)
     raw_orders = list(get_collection('orders').find({'user_id': current.id})) if mongo_db is not None else [order for order in IN_MEMORY_DB['orders'] if order.get('user_id') == current.id]
     orders_list = [build_order_view(order) for order in raw_orders]
     return render_template(request, 'orders.html', orders=orders_list)
@@ -477,15 +541,15 @@ async def api_food():
     } for item in items])
 
 
-@app.get('/login', name='login')
+@app.get(LOGIN_URL, name='login')
 async def login_page(request: Request):
     current = get_current_user(request)
     if current:
-        return RedirectResponse(url='/admin/dashboard' if current.is_admin else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=ADMIN_DASHBOARD_URL if current.is_admin else USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     return render_template(request, 'login.html')
 
 
-@app.post('/login', name='login_post')
+@app.post(LOGIN_URL, name='login_post')
 async def login_post(request: Request, email: str = Form(...), password: str = Form(...), remember: str = Form(default='')):
     user_doc = None
     if mongo_db is not None:
@@ -493,46 +557,46 @@ async def login_post(request: Request, email: str = Form(...), password: str = F
     else:
         user_doc = next((u for u in IN_MEMORY_DB['users'] if u.get('email') == email), None)
     if not user_doc or not check_password_hash(user_doc.get('password_hash', ''), password):
-        return RedirectResponse('/login', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(LOGIN_URL, status_code=status.HTTP_303_SEE_OTHER)
 
-    response = RedirectResponse(url='/admin/dashboard' if user_doc.get('role') == 'Admin' else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse(url=ADMIN_DASHBOARD_URL if user_doc.get('role') == 'Admin' else USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, secure=True, samesite='lax')
     return response
 
 
-@app.get('/register', name='register')
+@app.get(REGISTER_URL, name='register')
 async def register_page(request: Request):
     current = get_current_user(request)
     if current:
-        return RedirectResponse(url='/admin/dashboard' if current.is_admin else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=ADMIN_DASHBOARD_URL if current.is_admin else USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     return render_template(request, 'register.html')
 
 
-@app.post('/register', name='register_post')
+@app.post(REGISTER_URL, name='register_post')
 async def register_post(request: Request, username: str = Form(...), email: str = Form(...), password: str = Form(...), role: str = Form('Student')):
     if role not in ['Student', 'Admin']:
         role = 'Student'
     if mongo_db is not None:
         existing = mongo_db.users.find_one({'$or': [{'email': email}, {'username': username}]})
         if existing:
-            return RedirectResponse('/register', status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(REGISTER_URL, status_code=status.HTTP_303_SEE_OTHER)
         user_doc = {'username': username, 'email': email, 'password_hash': generate_password_hash(password), 'role': role, 'created_at': datetime.now(timezone.utc)}
         result = mongo_db.users.insert_one(user_doc)
         user_doc['_id'] = result.inserted_id
     else:
         existing = next((u for u in IN_MEMORY_DB['users'] if u.get('email') == email or u.get('username') == username), None)
         if existing:
-            return RedirectResponse('/register', status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(REGISTER_URL, status_code=status.HTTP_303_SEE_OTHER)
         user_doc = {'_id': f'user-{len(IN_MEMORY_DB["users"]) + 1}', 'username': username, 'email': email, 'password_hash': generate_password_hash(password), 'role': role}
         IN_MEMORY_DB['users'].append(user_doc)
-    response = RedirectResponse(url='/admin/dashboard' if user_doc.get('role') == 'Admin' else '/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse(url=ADMIN_DASHBOARD_URL if user_doc.get('role') == 'Admin' else USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     response.set_cookie('user_id', str(user_doc.get('_id', user_doc.get('id'))), httponly=True, secure=True, samesite='lax')
     return response
 
 
 @app.get('/logout', name='logout')
 async def logout(request: Request):
-    response = RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+    response = RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     response.delete_cookie('user_id')
     return response
 
@@ -541,7 +605,7 @@ async def logout(request: Request):
 async def checkout(request: Request):
     current = get_current_user(request)
     if not current:
-        return JSONResponse({'success': False, 'message': 'Please sign in to your account to place an order.', 'redirect': '/login'}, status_code=401)
+        return JSONResponse({'success': False, 'message': 'Please sign in to your account to place an order.', 'redirect': LOGIN_URL}, status_code=401)
 
     try:
         payload = await request.json()
@@ -596,7 +660,7 @@ async def order_status_api(request: Request, order_id: str):
 async def admin_dashboard(request: Request):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     filter_time = request.query_params.get('break_time', 'All')
     filter_status = request.query_params.get('status', 'All')
     raw_orders = list(get_collection('orders').find()) if mongo_db is not None else IN_MEMORY_DB['orders']
@@ -626,7 +690,7 @@ async def admin_dashboard(request: Request):
 async def manage_items(request: Request):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     menu_items = list(get_collection('menu').find()) if mongo_db is not None else IN_MEMORY_DB['menu']
     active_items = [normalize_menu_record(item) for item in menu_items if item.get('status') == 'Active']
     deleted_items = [normalize_menu_record(item) for item in menu_items if item.get('status') == 'Deleted']
@@ -638,7 +702,7 @@ async def manage_items(request: Request):
 async def manage_slots(request: Request):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     slots = list(get_collection('time_slots').find()) if mongo_db is not None else IN_MEMORY_DB['time_slots']
     normalized_slots = [normalize_slot_record(slot) for slot in slots]
     return render_template(request, 'manage_slots.html', slots=normalized_slots)
@@ -655,33 +719,14 @@ async def manage_slots_post(
 ):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
 
     if not slot_name or not start_time or not end_time:
-        return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(MANAGE_SLOTS_URL, status_code=status.HTTP_303_SEE_OTHER)
 
-    payload = {
-        'slot_name': slot_name,
-        'start_time': start_time,
-        'end_time': end_time,
-        'is_active': parse_checkbox_flag(is_active),
-    }
-
-    if slot_id:
-        if mongo_db is not None:
-            mongo_db.time_slots.update_one({'_id': ObjectId(slot_id)}, {'$set': payload})
-        else:
-            for slot in IN_MEMORY_DB['time_slots']:
-                if str(slot.get('_id')) == str(slot_id):
-                    slot.update(payload)
-                    break
-    else:
-        if mongo_db is not None:
-            mongo_db.time_slots.insert_one(payload)
-        else:
-            payload['_id'] = f'slot-{len(IN_MEMORY_DB["time_slots"]) + 1}'
-            IN_MEMORY_DB['time_slots'].append(payload)
-    return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+    payload = build_slot_payload(slot_name, start_time, end_time, is_active)
+    save_slot(slot_id, payload)
+    return RedirectResponse(MANAGE_SLOTS_URL, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get('/admin/slots/edit/{slot_id}', name='admin_edit_slot_get')
@@ -689,47 +734,31 @@ async def manage_slots_post(
 async def admin_edit_slot(request: Request, slot_id: str, slot_name: str = Form(default=''), start_time: str = Form(default=''), end_time: str = Form(default=''), is_active: Optional[str] = Form(default=None)):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     if request.method == 'GET':
-        slots = list(get_collection('time_slots').find()) if mongo_db is not None else IN_MEMORY_DB['time_slots']
-        slot = next((item for item in slots if str(item.get('_id')) == str(slot_id)), None)
-        if slot:
-            return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
-        return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(MANAGE_SLOTS_URL, status_code=status.HTTP_303_SEE_OTHER)
     if not slot_name or not start_time or not end_time:
-        return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
-    payload = {
-        'slot_name': slot_name,
-        'start_time': start_time,
-        'end_time': end_time,
-        'is_active': parse_checkbox_flag(is_active),
-    }
-    if mongo_db is not None:
-        mongo_db.time_slots.update_one({'_id': ObjectId(slot_id)}, {'$set': payload})
-    else:
-        for slot in IN_MEMORY_DB['time_slots']:
-            if str(slot.get('_id')) == str(slot_id):
-                slot.update(payload)
-                break
-    return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(MANAGE_SLOTS_URL, status_code=status.HTTP_303_SEE_OTHER)
+    save_slot(slot_id, build_slot_payload(slot_name, start_time, end_time, is_active))
+    return RedirectResponse(MANAGE_SLOTS_URL, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post('/admin/slots/toggle-status/{slot_id}', name='toggle_slot_status')
 async def toggle_slot_status(request: Request, slot_id: str):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse('/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     if mongo_db is not None:
         slot = mongo_db.time_slots.find_one({'_id': ObjectId(slot_id)})
         if not slot:
-            return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+            return RedirectResponse(MANAGE_SLOTS_URL, status_code=status.HTTP_303_SEE_OTHER)
         mongo_db.time_slots.update_one({'_id': ObjectId(slot_id)}, {'$set': {'is_active': not bool(slot.get('is_active', True))}})
     else:
         for slot in IN_MEMORY_DB['time_slots']:
             if str(slot.get('_id')) == str(slot_id):
                 slot['is_active'] = not bool(slot.get('is_active', True))
                 break
-    return RedirectResponse('/manage-slots', status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(MANAGE_SLOTS_URL, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get('/admin/menu/add', name='admin_add_food_get')
@@ -747,27 +776,16 @@ async def admin_add_food(
 ):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     resolved_name = (name or item_name or '').strip()
     if request.method == 'GET':
         return render_template(request, 'admin_food_form.html', action='Add', food=None)
     if not resolved_name or price <= 0:
-        return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
-    item = {
-        'item_name': resolved_name,
-        'description': description,
-        'price': price,
-        'category': category,
-        'image_url': image_url or 'https://images.unsplash.com/photo-1546069901-ba9599a7e63c?w=600&auto=format&fit=crop&q=80',
-        'status': 'Active' if availability not in ['', '0', 'false', 'False', 'FALSE'] else 'Deleted',
-        'created_at': datetime.now(timezone.utc),
-    }
-    if mongo_db is not None:
-        mongo_db.menu.insert_one(item)
-    else:
-        item['_id'] = f'menu-{len(IN_MEMORY_DB["menu"]) + 1}'
-        IN_MEMORY_DB['menu'].append(item)
-    return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(MANAGE_ITEMS_URL, status_code=status.HTTP_303_SEE_OTHER)
+    item = build_menu_payload(name, item_name, description, price, category, image_url, availability)
+    item['created_at'] = datetime.now(timezone.utc)
+    save_menu_item('', item)
+    return RedirectResponse(MANAGE_ITEMS_URL, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.get('/admin/menu/edit/{item_id}', name='admin_edit_food_get')
@@ -786,33 +804,17 @@ async def admin_edit_food(
 ):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse(url='/user_menu', status_code=status.HTTP_303_SEE_OTHER)
-    resolved_name = (name or item_name or '').strip()
+        return RedirectResponse(url=USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     if request.method == 'GET':
-        item = None
-        if mongo_db is not None:
-            item = mongo_db.menu.find_one({'_id': ObjectId(item_id)})
-        else:
-            item = next((itm for itm in IN_MEMORY_DB['menu'] if str(itm.get('_id')) == str(item_id)), None)
+        item = get_menu_by_id(item_id)
         if item is not None:
             item = normalize_menu_record(item)
         return render_template(request, 'admin_food_form.html', action='Edit', food=item)
-    if not resolved_name or price <= 0:
-        return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
-    resolved_status = 'Active' if availability not in ['', '0', 'false', 'False', 'FALSE'] else 'Deleted'
-    if mongo_db is not None:
-        mongo_db.menu.update_one({'_id': ObjectId(item_id)}, {'$set': {'item_name': resolved_name, 'description': description, 'price': price, 'category': category, 'image_url': image_url, 'status': resolved_status}})
-    else:
-        for item in IN_MEMORY_DB['menu']:
-            if str(item.get('_id')) == str(item_id):
-                item['item_name'] = resolved_name
-                item['description'] = description
-                item['price'] = price
-                item['category'] = category
-                item['image_url'] = image_url
-                item['status'] = resolved_status
-                break
-    return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+    item = build_menu_payload(name, item_name, description, price, category, image_url, availability)
+    if not item['item_name'] or price <= 0:
+        return RedirectResponse(MANAGE_ITEMS_URL, status_code=status.HTTP_303_SEE_OTHER)
+    save_menu_item(item_id, item)
+    return RedirectResponse(MANAGE_ITEMS_URL, status_code=status.HTTP_303_SEE_OTHER)
 
 
 @app.post('/admin/orders/{order_id}/status', name='update_order_status')
@@ -849,7 +851,7 @@ async def update_order_status(request: Request, order_id: str):
 async def toggle_item_status(request: Request, item_id: str):
     current = get_current_user(request)
     if not current or not current.is_admin:
-        return RedirectResponse('/user_menu', status_code=status.HTTP_303_SEE_OTHER)
+        return RedirectResponse(USER_MENU_URL, status_code=status.HTTP_303_SEE_OTHER)
     if mongo_db is not None:
         item = mongo_db.menu.find_one({'_id': ObjectId(item_id)})
         new_status = 'Deleted' if item.get('status') == 'Active' else 'Active'
@@ -859,7 +861,7 @@ async def toggle_item_status(request: Request, item_id: str):
             if str(item.get('_id')) == str(item_id):
                 item['status'] = 'Deleted' if item.get('status') == 'Active' else 'Active'
                 break
-    return RedirectResponse('/manage_items', status_code=status.HTTP_303_SEE_OTHER)
+    return RedirectResponse(MANAGE_ITEMS_URL, status_code=status.HTTP_303_SEE_OTHER)
 
 
 def seed_database():

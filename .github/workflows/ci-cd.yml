@@ -65,6 +65,10 @@ jobs:
           args: |
             -Dsonar.projectKey=Chetan-Lawate_Preordingfoodapp
             -Dsonar.organization=chetan-lawate
+            -Dsonar.sources=backend,frontend
+            -Dsonar.tests=backend
+            -Dsonar.test.inclusions=backend/test_*.py
+            -Dsonar.exclusions=**/__pycache__/**,**/*.pyc,frontend/static/**
             -Dsonar.qualitygate.wait=true
 
   trivy:

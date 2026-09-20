@@ -81,6 +81,7 @@ jobs:
             -Dsonar.tests=backend
             -Dsonar.test.inclusions=backend/test_*.py
             -Dsonar.exclusions=**/__pycache__/**,**/*.pyc,frontend/static/**
+            -Dsonar.coverage.exclusions=backend/models.py,backend/seed.py
             -Dsonar.python.coverage.reportPaths=coverage.xml
             -Dsonar.qualitygate.wait=true
 

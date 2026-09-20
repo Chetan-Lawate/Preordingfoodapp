@@ -94,6 +94,7 @@ def test_in_memory_collection_supports_query_operators():
     assert len(collection.find({'score': {'$lte': 2}})) == 1
     assert len(collection.find({'$or': [{'tag': 'food'}, {'score': 2}]})) == 2
     assert len(collection.find({'$and': [{'tag': 'food'}, {'score': 10}]})) == 1
+    assert app_module.InMemoryCollection._matches_condition({}, '$or', {}) is True
 
     collection.insert_one({'name': 'new'})
     collection.update_one({'name': 'new'}, {'$set': {'score': 7}})

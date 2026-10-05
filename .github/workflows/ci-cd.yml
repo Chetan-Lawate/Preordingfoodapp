@@ -134,7 +134,7 @@ jobs:
                 "| \(.Target) | \((.Vulnerabilities // [] | length)) | \((.Secrets // [] | length)) |"
               end),
               "",
-              "_Targets are the file paths represented in Trivy's JSON report; this is not a count of every file traversed._"
+              "_Targets are the file paths represented in the Trivy JSON report; this is not a count of every file traversed._"
             ] | .[]
           ' trivy-fs.json >> "$GITHUB_STEP_SUMMARY"
 

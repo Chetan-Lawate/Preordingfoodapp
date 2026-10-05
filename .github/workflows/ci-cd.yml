@@ -102,7 +102,41 @@ jobs:
           scanners: vuln,secret
           severity: UNKNOWN,LOW,MEDIUM,HIGH,CRITICAL
           ignore-unfixed: true
+          format: json
+          output: trivy-fs.json
           exit-code: 1
+
+      - name: Summarize Trivy filesystem scan
+        if: always()
+        run: |
+          if [[ ! -s trivy-fs.json ]]; then
+            {
+              echo '### Trivy filesystem scan'
+              echo
+              echo 'No scan report was produced.'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+
+          jq -r '
+            (.Results // []) as $results |
+            [
+              "### Trivy filesystem scan",
+              "",
+              "**Reported file targets:** \($results | length)",
+              "",
+              "| Target | Vulnerabilities | Secrets |",
+              "|---|---:|---:|",
+              (if ($results | length) == 0 then
+                "| _No file targets reported_ | 0 | 0 |"
+              else
+                $results[] |
+                "| \(.Target) | \((.Vulnerabilities // [] | length)) | \((.Secrets // [] | length)) |"
+              end),
+              "",
+              "_Targets are the file paths represented in Trivy's JSON report; this is not a count of every file traversed._"
+            ] | .[]
+          ' trivy-fs.json >> "$GITHUB_STEP_SUMMARY"
 
       - name: Scan Dockerfile configuration
         uses: aquasecurity/trivy-action@master

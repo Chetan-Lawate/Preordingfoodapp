@@ -32,7 +32,24 @@ Push → Tests ──────────┤                                
 -     project and create Scretes SONAR_TOKEN and SONAR_HOST_URL with Sonar-project.properties where i store the projectkey
 
 ## Day6
-     Trivy configuration for filesystem as we as trivy image 
+     Trivy configuration for filesystem as we as trying to trivy image 
 
+## Day7
+     Trivy configuration successfully done using github co-pilot and utho 
+     if system failed generate the .json file and aslo generate the scan summary
 
+## Day 8 
+     Using the render site for deployement 
+
+## Day9
+    automate the whole process start from run test to deployement 
+    if any scans failed , sonar quality gates failed deployement will blocked and auto generate the report in the form .json
+
+## Day10
+    Now we start removing high vernabulity so we pass the quality gate 
+    Their are some medium and low security checks points ar also 
+
+## Day11
+    Check the workflow of CI/CD pipeline sonar-qube trivy scan
+    render the website test the apis deploy the site 
 
